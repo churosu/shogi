@@ -195,7 +195,7 @@ const PIECES = {
   tatehei:   {name:"盾兵",  k:"盾", ap:1, desc:"攻撃フェーズ後、隣接1マスを指定。そのマスからの攻撃を受けない"},
   kiba:      {name:"騎馬",  k:"馬", ap:2, desc:"斜め移動可。行動力2を消費して駒を1つ飛び越えられる"},
   senshi:    {name:"戦士",  k:"戦", ap:1, desc:"体力2以下で与ダメ+1、体力1以下で与ダメ+2"},
-  jutsushi:  {name:"術士",  k:"術", ap:1, desc:"行動力1：敵1体の次ターンの行動力-1"},
+  jutsushi:  {name:"術士",  k:"術", ap:1, desc:"行動力0：敵1体の次ターンの行動力-1（毎ターン1回）。移動と併用可"},
   wanashi:   {name:"罠師",  k:"罠", ap:1, desc:"行動力1：周囲8マスに罠を設置（最大2）。罠＝1ダメ＋行動力-1。自分のみ視認可"},
   ninja:     {name:"忍者",  k:"忍", ap:2, desc:"行動力1：相手手番終了まで透明化。透明マスに来た敵に3ダメ。透明中は斜め移動可・爆発以外の攻撃無効・通常攻撃不可"},
   kusushi:   {name:"薬師",  k:"薬", ap:1, desc:"行動力1：隣接駒のHPを±1（味方+1／敵-1。ゲーム中1回のみ）"},
@@ -213,7 +213,7 @@ const PIECES = {
   majo:      {name:"魔女",  k:"魔", ap:1, desc:"行動力1：味方同士、または敵同士の位置を入れ替える"},
   bakudan:   {name:"爆弾魔",k:"爆", ap:1, noNormal:true, desc:"行動力1：隣接マスに爆弾設置。次の自分手番終了時に爆発し周囲8マスへ1ダメ。通常攻撃不可"},
   yusha:     {name:"勇者",  k:"勇", ap:1, desc:"召喚時、敵1体を密かに「魔王」に指定。魔王が場を去ると近接攻撃3・HP1回復"},
-  akuryo:    {name:"悪霊",  k:"霊", ap:1, desc:"行動力1：敵1体は次の手番、通常攻撃ができない"},
+  akuryo:    {name:"悪霊",  k:"霊", ap:1, desc:"行動力0：敵1体は次の手番、通常攻撃ができない（毎ターン1回）。移動と併用可"},
   kemono:    {name:"獣",    k:"獣", ap:1, beast:true, desc:"調教師の効果でのみ召喚される（HP1）"},
 };
 const PICKABLE = Object.keys(PIECES).filter(t=>t!=="kemono");
@@ -927,6 +927,7 @@ function startPlayerTurn(){
     p.ap=Math.max(0,p.maxAp-(p.flags.apCut?1:0));
     if(p.flags.apCut){log(`${pieceLabel(p)}は術で行動力が下がっている`,"s");}
     p.flags.apCut=false;
+    p.flags.usedFree=false;
   }
   UI={mode:"action",sel:null,targets:new Set(),ability:null,extra:{}};
   setPhaseBar('<span class="turnP">あなたの手番 — 行動フェーズ（駒1体を選んで移動／能力）</span>');
@@ -935,6 +936,10 @@ function startPlayerTurn(){
 function gotoAttackPhase(){
   if(!G.acted&&hasAnyPlayerAction()){
     log("先に駒1体を選んで移動か能力で行動力を消費してください","s");
+    return;
+  }
+  if(actorCanStillAct()){
+    log("選んだ駒の行動力をすべて使い切ってください","s");
     return;
   }
   G.phase="attack";
@@ -1012,11 +1017,21 @@ function takeActionSlot(p){
   if(G.currentActor===p.id){G.acted=true;return true;}
   if(G.currentActor!==null){
     if(G.slotsLeft<=0)return false;
-    G.currentActor=null; // 行動枠が残っていれば前の駒を自動で終了して切替
+    if(actorCanStillAct()){log("行動中の駒の行動力をすべて使い切ってから切り替えてください","s");return false;}
+    G.currentActor=null; // 前の駒が行動力を使い切っていれば自動で切替
   }
   if(G.slotsLeft<=0)return false;
   G.currentActor=p.id; G.slotsLeft--; G.acted=true;
   return true;
+}
+/* 行動中の駒にまだ消費可能な行動力が残っているか */
+function actorCanStillAct(){
+  if(G.currentActor===null)return false;
+  const p=byId(G.currentActor);
+  if(!p||p.dead)return false;
+  if(stepOptions(p).length>0)return true;
+  if(jumpOptions(p).length>0)return true;
+  return abilityButtons(p).some(b=>b.enabled);
 }
 /* 行動可能な駒が1体でも存在するか（手詰まり救済用） */
 function hasAnyPlayerAction(){
@@ -1048,15 +1063,23 @@ function abilityButtons(p){
       });break;}
     case "jutsushi":{
       const ts=alive("E").filter(t=>!t.flags.invisible);
-      A("行動阻害（行1）",canAct&&p.ap>=1&&ts.length>0,()=>{
+      A("行動阻害（行0・毎ターン1回）",canAct&&!p.flags.usedFree&&ts.length>0,()=>{
         UI.mode="ability";UI.ability={type:"slow",piece:p};
         UI.targets=new Set(ts.map(t=>t.r+","+t.c));render();
+      });
+      A("待機（残り行動力を消費）",canAct&&p.ap>=1,()=>{
+        if(!takeActionSlot(p))return;
+        p.ap=0;log("術士はその場で待機した","p");render();
       });break;}
     case "akuryo":{
       const ts=alive("E").filter(t=>!t.flags.invisible);
-      A("呪縛：攻撃封じ（行1）",canAct&&p.ap>=1&&ts.length>0,()=>{
+      A("呪縛：攻撃封じ（行0・毎ターン1回）",canAct&&!p.flags.usedFree&&ts.length>0,()=>{
         UI.mode="ability";UI.ability={type:"bind",piece:p};
         UI.targets=new Set(ts.map(t=>t.r+","+t.c));render();
+      });
+      A("待機（残り行動力を消費）",canAct&&p.ap>=1,()=>{
+        if(!takeActionSlot(p))return;
+        p.ap=0;log("悪霊はその場で待機した","p");render();
       });break;}
     case "wanashi":{
       const myTraps=G.traps.filter(t=>t.owner==="P").length;
@@ -1168,13 +1191,13 @@ function resolveAbilityClick(r,c){
       return;}
     case "slow":{
       if(!takeActionSlot(p))break;
-      p.ap--;
+      p.flags.usedFree=true;
       const t=visAt(r,c,"P");
       if(t){t.flags.apCut=true;log(`術士の呪い…${pieceLabel(t)}の次ターン行動力-1`,"p");sfx("pick");}
       break;}
     case "bind":{
       if(!takeActionSlot(p))break;
-      p.ap--;
+      p.flags.usedFree=true;
       const t=visAt(r,c,"P");
       if(t){t.flags.noAttack=true;log(`悪霊が取り憑いた…${pieceLabel(t)}は次の手番、通常攻撃不可`,"p");sfx("pick");}
       break;}
@@ -1836,10 +1859,11 @@ function renderCtrl(){
   if(G.turn==="P"){
     if(UI.mode==="action"){
       if(G.currentActor!==null&&G.slotsLeft>0){
-        btn("この駒の行動を終える","",()=>{G.currentActor=null;UI.sel=null;render();});
+        btn("この駒の行動を終える","",()=>{G.currentActor=null;UI.sel=null;render();},actorCanStillAct());
       }
       const mustAct=!G.acted&&hasAnyPlayerAction();
-      btn(mustAct?"攻撃フェーズへ（要：駒1体の行動）":"攻撃フェーズへ","primary",()=>gotoAttackPhase(),mustAct);
+      const apLeft=actorCanStillAct();
+      btn(mustAct?"攻撃フェーズへ（要：駒1体の行動）":apLeft?"攻撃フェーズへ（行動力を使い切る）":"攻撃フェーズへ","primary",()=>gotoAttackPhase(),mustAct||apLeft);
     }else if(UI.mode==="ability"){
       btn("キャンセル","",()=>{clearAbility();render();});
     }else if(UI.mode==="attack"){
@@ -1946,7 +1970,7 @@ function showHelp(){
    <div class="ruleSec"><h3>ターンの流れ</h3><p>① 行動フェーズ：<b>必ず駒1体を選び、行動力を消費して</b>移動（1マス=行動力1）や能力使用を行います（行動できる駒が1体もいない場合のみスキップ可）。<br>② 攻撃フェーズ：駒1体（移動した駒以外でも可）で通常攻撃。基本は縦横の隣接マスに1ダメージ。<br>③ ターンエンド。全駒HP3、HP0以下で撃破。</p></div>
    <div class="ruleSec"><h3>駒一覧（全24種）</h3><table>${rows}</table></div>
    <div class="ruleSec"><h3>このアプリでの裁定メモ</h3>
-     <p>・行動フェーズの行動（行動力の消費）は必須です。<br>・射程内に敵がいない遠距離攻撃など、対象のない能力は使用できません。<br>・敵の駒をタップすると効果を確認できます。<br>・術士／悪霊の消費は行動力1で実装。<br>・薬師の調合と聖職者の祈祷は各1回限り。<br>・勇者は再召喚時にも魔王を指定できます。<br>・盾兵の防御指定は毎ターン攻撃フェーズ後に変更可（縦横4マスから選択）。<br>・移動と能力は行動力の範囲で同一ターンに併用できます。</p></div>
+     <p>・行動フェーズでは選んだ駒の行動力をすべて消費するまで攻撃フェーズに進めません（移動先や能力対象が一切ない場合を除く）。<br>・射程内に敵がいない遠距離攻撃など、対象のない能力は使用できません。<br>・敵の駒をタップすると効果を確認できます。<br>・術士／悪霊の能力は行動力0で使用できます（毎ターン1回）。残った行動力は移動か「待機」で消費します。<br>・薬師の調合と聖職者の祈祷は各1回限り。<br>・勇者は再召喚時にも魔王を指定できます。<br>・盾兵の防御指定は毎ターン攻撃フェーズ後に変更可（縦横4マスから選択）。<br>・移動と能力は行動力の範囲で同一ターンに併用できます。</p></div>
   `,[{label:"閉じる",cls:"primary",fn:closeModal}]);
 }
 
