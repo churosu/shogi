@@ -87,12 +87,19 @@ h1 small{font-size:11px;letter-spacing:.15em;color:var(--sub);display:block;marg
 .piece.E .badges{transform:none}
 .piece.invis{opacity:.45;filter:saturate(.4)}
 .piece.actorNow{outline:2px solid #fff;outline-offset:-2px}
-.piece.flash{animation:hitflash .35s}
-@keyframes hitflash{0%{filter:brightness(3) saturate(0)}100%{filter:none}}
+.piece.flash{animation:hitflash .6s}
+@keyframes hitflash{
+  0%,40%{filter:brightness(1.9) sepia(1) saturate(14) hue-rotate(-38deg) drop-shadow(0 0 9px #ff2a1a)}
+  20%,60%{filter:none}
+  80%{filter:brightness(1.7) sepia(1) saturate(12) hue-rotate(-38deg) drop-shadow(0 0 7px #ff2a1a)}
+  100%{filter:none}}
 .piece.spawn{animation:spawn .3s}
 @keyframes spawn{0%{transform:scale(.2)}100%{transform:scale(1)}}
 .piece.E.spawn{animation:spawnE .3s}
 @keyframes spawnE{0%{transform:rotate(180deg) scale(.2)}100%{transform:rotate(180deg) scale(1)}}
+
+#peekBack{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:60;
+  box-shadow:0 4px 20px rgba(0,0,0,.7);animation:pulse 1.4s infinite}
 
 #ctrl{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;padding:4px 0 8px;min-height:44px}
 button.act{font-family:inherit;font-size:14px;letter-spacing:.08em;
@@ -190,17 +197,17 @@ const PIECES = {
   senshi:    {name:"戦士",  k:"戦", ap:1, desc:"体力2以下で与ダメ+1、体力1以下で与ダメ+2"},
   jutsushi:  {name:"術士",  k:"術", ap:1, desc:"行動力1：敵1体の次ターンの行動力-1"},
   wanashi:   {name:"罠師",  k:"罠", ap:1, desc:"行動力1：周囲8マスに罠を設置（最大2）。罠＝1ダメ＋行動力-1。自分のみ視認可"},
-  ninja:     {name:"忍者",  k:"忍", ap:2, desc:"行動力1：相手手番終了まで透明化。透明マスに来た敵に3ダメ。透明中は斜め移動可・爆発以外の攻撃無効"},
+  ninja:     {name:"忍者",  k:"忍", ap:2, desc:"行動力1：相手手番終了まで透明化。透明マスに来た敵に3ダメ。透明中は斜め移動可・爆発以外の攻撃無効・通常攻撃不可"},
   kusushi:   {name:"薬師",  k:"薬", ap:1, desc:"行動力1：隣接駒のHPを±1（味方+1／敵-1。ゲーム中1回のみ）"},
   chokyo:    {name:"調教師",k:"調", ap:1, noNormal:true, desc:"行動力1：HP1の獣を隣に召喚し、以後操作できる。獣死亡で自分HP-0.5。通常攻撃不可"},
   gunshi:    {name:"軍師",  k:"軍", ap:1, desc:"行動力1＋HP0.5：このターン、駒を2体行動させられる"},
   souhei:    {name:"槍兵",  k:"槍", ap:1, desc:"通常攻撃の範囲が「斜め4マス＋正面1マス」になる"},
   fushicho:  {name:"不死鳥",k:"鳳", ap:1, desc:"死亡時、1度だけ失点を与えずHP0.5でその場に復活"},
   jusoshi:   {name:"呪詛師",k:"呪", ap:1, desc:"HP1.5を消費：敵全体のHP-0.5（行動力消費なし）"},
-  miko:      {name:"巫女",  k:"巫", ap:1, desc:"行動力1＋HP1：味方1体の行動力+1。さらにその駒も行動できる"},
+  miko:      {name:"巫女",  k:"巫", ap:1, desc:"行動力1＋HP0.5：味方1体の行動力+1。さらにその駒も行動できる"},
   esper:     {name:"超能力者",k:"超", ap:1, desc:"召喚時に縦横／斜めモードを選択。射程2マス内の駒（敵味方問わず）を1マス動かす（行動力1）"},
   boken:     {name:"冒険者",k:"冒", ap:2, desc:"左右の端を行き来できる"},
-  kyuketsuki:{name:"吸血鬼",k:"吸", ap:1, desc:"この駒で敵を倒した時、HPを1回復する"},
+  kyuketsuki:{name:"吸血鬼",k:"吸", ap:1, desc:"通常攻撃でダメージを与えるたび、HPを0.5回復する"},
   sogeki:    {name:"狙撃手",k:"狙", ap:1, noNormal:true, desc:"行動力1：斜め3マスまでの遠距離攻撃。通常攻撃不可"},
   seishoku:  {name:"聖職者",k:"聖", ap:1, desc:"死亡時、味方全てに1ダメージ。1度だけ行動力1で味方全体のHP+0.5"},
   majo:      {name:"魔女",  k:"魔", ap:1, desc:"行動力1：味方同士、または敵同士の位置を入れ替える"},
@@ -669,6 +676,9 @@ function dealDamage(target,dmg,src,kind){
   target.flash=true;
   sfx(kind==="heal"?"heal":"hit");
   log(`${pieceLabel(target)}に${fmt(dmg)}ダメージ（残HP ${fmt(Math.max(0,target.hp))}）`,src&&src.owner==="P"?"p":"e");
+  if(src && src.type==="kyuketsuki" && src.owner!==target.owner && !src.dead && kind==="melee" && src.hp<3){
+    healPiece(src,0.5);
+  }
   if(target.hp<=0){ killPiece(target,src,kind); }
   return true;
 }
@@ -687,10 +697,6 @@ function killPiece(p,src,kind){
   p.dead=true;
   sfx("death");
   log(`◆ ${pieceLabel(p)}は倒れた！`,p.owner==="P"?"e":"p");
-  if(src && src.type==="kyuketsuki" && src.owner!==p.owner && !src.dead && (kind==="melee"||kind==="ranged")){
-    healPiece(src,1);
-    log("吸血鬼は血を吸って回復した","s");
-  }
   // 魔王チェック
   for(const h of G.pieces){
     if(!h.dead && h.type==="yusha" && h.flags.maouId===p.id && !h.flags.heroBoost){
@@ -886,6 +892,7 @@ function atkDamage(p,kind){
 }
 function normalAttackCells(p){
   if(PIECES[p.type].noNormal)return [];
+  if(p.flags.invisible)return []; // 忍者：透明中は通常攻撃不可
   let dirs;
   if(p.type==="souhei") dirs=[...DIAG,[frontDr(p.owner),0]];
   else dirs=ORTHO;
@@ -1097,7 +1104,7 @@ function abilityButtons(p){
       });break;
     case "miko":{
       const ts=alive("P").filter(t=>t.id!==p.id);
-      A("神楽：味方+1行動（行1＋HP1）",canAct&&p.ap>=1&&p.hp>1&&ts.length>0,()=>{
+      A("神楽：味方+1行動（行1＋HP0.5）",canAct&&p.ap>=1&&p.hp>0.5&&ts.length>0,()=>{
         UI.mode="ability";UI.ability={type:"kagura",piece:p};
         UI.targets=new Set(ts.map(t=>t.r+","+t.c));render();
       });break;}
@@ -1199,10 +1206,10 @@ function resolveAbilityClick(r,c){
       const t=at(r,c);
       if(!t||t.owner!=="P")break;
       if(!takeActionSlot(p))break;
-      p.ap--;p.hp=r2(p.hp-1);
+      p.ap--;p.hp=r2(p.hp-0.5);
       t.ap++;G.slotsLeft++;
       G.currentActor=null;UI.sel=t.id;
-      log(`巫女の神楽…${pieceLabel(t)}の行動力+1、続けて行動できる（巫女HP-1）`,"p");sfx("heal");
+      log(`巫女の神楽…${pieceLabel(t)}の行動力+1、続けて行動できる（巫女HP-0.5）`,"p");sfx("heal");
       break;}
     case "psy1":{
       const t=at(r,c);
@@ -1557,7 +1564,7 @@ function aiMakePlan(){
     }
     // best normal attack（駒1体で1回）
     let bestAtk=null,bestAtkScore=-1;
-    for(const a of sim.filter(x=>x.owner==="E"&&!x.dead&&!x.noAttack)){
+    for(const a of sim.filter(x=>x.owner==="E"&&!x.dead&&!x.noAttack&&!x.invisible)){
       if(PIECES[a.type].noNormal)continue;
       const dirs=a.type==="souhei"?[...DIAG,[1,0]]:ORTHO;
       for(const [dr,dc] of dirs){
@@ -1899,7 +1906,9 @@ function openModal(title,bodyHtml,buttons){
   $("#modalBack").classList.remove("hidden");
 }
 function closeModal(){$("#modalBack").classList.add("hidden");}
+let pickerArgs=null;
 function openPiecePicker(title,cb){
+  pickerArgs={title,cb};
   let html='<div class="pickGrid">';
   for(const t of PICKABLE){
     const I=PIECES[t];
@@ -1908,10 +1917,21 @@ function openPiecePicker(title,cb){
       <div class="d">${I.desc}</div></div>`;
   }
   html+="</div>";
-  openModal(title,html,[]);
+  openModal(title,html,[{label:"盤面を確認する",fn:()=>{closeModal();showPeekBack();}}]);
   $("#modalBody").querySelectorAll(".pCard").forEach(card=>{
-    card.onclick=()=>{sfx("pick");closeModal();cb(card.dataset.t);};
+    card.onclick=()=>{sfx("pick");pickerArgs=null;hidePeekBack();closeModal();cb(card.dataset.t);};
   });
+}
+function showPeekBack(){
+  hidePeekBack();
+  const b=document.createElement("button");
+  b.id="peekBack";b.className="act primary";b.textContent="▲ 駒の選択に戻る";
+  b.onclick=()=>{hidePeekBack();if(pickerArgs)openPiecePicker(pickerArgs.title,pickerArgs.cb);};
+  document.body.appendChild(b);
+}
+function hidePeekBack(){
+  const b=document.getElementById("peekBack");
+  if(b)b.remove();
 }
 
 function showHelp(){
