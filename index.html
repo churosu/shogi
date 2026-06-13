@@ -199,7 +199,7 @@ const PIECES = {
   wanashi:   {name:"罠師",  k:"罠", ap:1, desc:"行動力1：周囲8マスに罠を設置（最大2）。罠＝1ダメ＋行動力-1。自分のみ視認可"},
   ninja:     {name:"忍者",  k:"忍", ap:2, desc:"行動力1：相手手番終了まで透明化。透明マスに来た敵に3ダメ。透明中は斜め移動可・爆発以外の攻撃無効・通常攻撃不可"},
   kusushi:   {name:"薬師",  k:"薬", ap:1, desc:"行動力1：隣接駒のHPを±1（味方+1／敵-1。ゲーム中1回のみ）"},
-  chokyo:    {name:"調教師",k:"調", ap:1, noNormal:true, desc:"行動力1：HP1の獣を隣に召喚し、以後操作できる。獣死亡で自分HP-0.5。通常攻撃不可"},
+  chokyo:    {name:"調教師",k:"調", ap:1, noNormal:true, desc:"行動力1：HP1の獣を隣に召喚（召喚したターンから操作可）。獣死亡で自分HP-0.5。通常攻撃不可"},
   gunshi:    {name:"軍師",  k:"軍", ap:1, desc:"行動力1＋HP0.5：このターン、駒を2体行動させられる"},
   souhei:    {name:"槍兵",  k:"槍", ap:1, desc:"通常攻撃の範囲が「斜め4マス＋正面1マス」になる"},
   fushicho:  {name:"不死鳥",k:"鳳", ap:1, desc:"死亡時、1度だけ失点を与えずHP0.5でその場に復活"},
@@ -226,6 +226,7 @@ let G=null;          // game state
 let UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
 let aiLevel="hard";
 let aiDepth=10; // 最強モードの探索プライ数
+let randomDeal=false; // ランダム配布モード
 let soundOn=true;
 let pid=1;
 const $=s=>document.querySelector(s);
@@ -242,8 +243,52 @@ function newGame(){
   UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
   pid=1;
   $("#log").innerHTML="";
+  if(randomDeal){
+    log("―― ランダム配布モード。両軍の駒が無作為に配られます ――","s");
+    applyRandomDealSolo();
+    return;
+  }
   log("―― 開戦。先手はあなたです ――","s");
   beginSetupStep();
+  render();
+}
+/* ランダムな駒種と配置を3つ生成（重複可・色制約を満たす列を選ぶ） */
+function makeRandomDeal(){
+  const pick=()=>PICKABLE[Math.floor(Math.random()*PICKABLE.length)];
+  const cols=()=>{
+    // 6列から3列を選び、色制約（3駒すべて同じ陣はNG）を満たすまで再抽選
+    for(let tries=0;tries<60;tries++){
+      const all=[0,1,2,3,4,5];
+      for(let i=all.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[all[i],all[j]]=[all[j],all[i]];}
+      const c=all.slice(0,3);
+      const left=c.filter(x=>x<3).length;
+      if(left>=1&&left<=2)return c; // 左右に分散
+    }
+    return [0,2,4];
+  };
+  const pc=cols(), ec=cols();
+  const mk=(c)=>{const type=pick();const o={type,c};if(type==="esper")o.em=Math.random()<0.5?"ortho":"diag";return o;};
+  return {
+    P:[0,1,2].map(i=>mk(pc[i])),
+    E:[0,1,2].map(i=>mk(ec[i])),
+  };
+}
+function applyRandomDealSolo(){
+  const deal=makeRandomDeal();
+  // プレイヤー：手前row5、敵：奥row0
+  for(const d of deal.P){
+    const p=makePiece(d.type,"P",5,d.c); G.pieces.push(p);
+    if(d.type==="esper")p.flags.esperMode=d.em||"ortho";
+  }
+  for(const d of deal.E){
+    const p=makePiece(d.type,"E",0,d.c); G.pieces.push(p);
+    if(d.type==="esper")p.flags.esperMode=d.em||"ortho";
+  }
+  G.setupCount={P:3,E:3};
+  G.aiTypes=deal.E.map(d=>d.type);
+  log("自軍："+deal.P.map(d=>PIECES[d.type].name).join("・")+" が配られた","p");
+  log("敵軍："+deal.E.map(d=>PIECES[d.type].name).join("・")+" が配られた","e");
+  startMaouPhase();
   render();
 }
 
@@ -427,7 +472,7 @@ function netOnData(msg){
   if(!msg)return;
   if(msg.t==="start"){
     NET.on=true;closeModal();
-    newNetGame(!!msg.youFirst);
+    newNetGame(!!msg.youFirst, !!msg.randomDeal, msg.deal||null);
     return;
   }
   if(msg.S){
@@ -498,9 +543,10 @@ function hostRoom(){
     conn.on("open",()=>{
       NET.on=true;
       const hostFirst=Math.random()<0.5;
-      try{conn.send({t:"start",youFirst:!hostFirst});}catch(e){}
+      const deal=randomDeal?makeRandomDeal():null;
+      try{conn.send({t:"start",youFirst:!hostFirst,randomDeal,deal});}catch(e){}
       closeModal();
-      newNetGame(hostFirst);
+      newNetGame(hostFirst,randomDeal,deal);
     });
   });
 }
@@ -532,7 +578,7 @@ function joinRoom(){
      }}]);
   setTimeout(()=>{const i=$("#roomCodeIn");if(i)i.focus();},50);
 }
-function newNetGame(first){
+function newNetGame(first,rnd,deal){
   NET.first=first;NET.overShown=false;NET.sentOver=false;NET.cont=null;NET.lock=false;
   NET.logBuf=[];NET.sfxBuf=[];
   G={pieces:[],traps:[],bombs:[],kills:{P:0,E:0},
@@ -543,6 +589,25 @@ function newNetGame(first){
   pid=1;
   $("#log").innerHTML="";
   log(`―― オンライン対戦 開戦。先手は${first?"あなた":"相手"}です ――`,"s",true);
+  if(rnd&&deal){
+    // 自分視点：first(=ホスト)ならdeal.Pが自分、joinならdeal.Eが自分
+    const mine=NET.first?deal.P:deal.E;
+    const theirs=NET.first?deal.E:deal.P;
+    for(const d of mine){
+      const p=makePiece(d.type,"P",5,d.c);G.pieces.push(p);
+      if(d.type==="esper")p.flags.esperMode=d.em||"ortho";
+    }
+    for(const d of theirs){
+      const p=makePiece(d.type,"E",0,d.c);G.pieces.push(p);
+      if(d.type==="esper")p.flags.esperMode=d.em||"ortho";
+    }
+    G.setupCount={P:3,E:3};
+    log("ランダム配布：自軍 "+mine.map(d=>PIECES[d.type].name).join("・"),"p",true);
+    G.nphase="maou1";
+    render();
+    netDispatch();
+    return;
+  }
   render();
   netDispatch();
 }
@@ -639,6 +704,16 @@ function askEsperMode(p,cb){
 
 /* ---- 魔王指定 ---- */
 function startMaouPhase(){
+  // 敵AIの勇者がいれば、こっそりプレイヤーの駒1体を魔王に指定
+  for(const h of alive("E").filter(p=>p.type==="yusha"&&!p.flags.maouId&&!p.flags.heroBoost)){
+    const targets=alive("P");
+    if(targets.length){
+      // 主力（行動力2や高HP）を狙う
+      const t=targets.slice().sort((a,b)=>(b.maxAp-a.maxAp)||(b.hp-a.hp))[0];
+      h.flags.maouId=t.id;
+      log("敵の勇者が密かに魔王を指定した…","e",true);
+    }
+  }
   const heroes=alive("P").filter(p=>p.type==="yusha" && !p.flags.maouId && !p.flags.heroBoost);
   if(heroes.length===0){ startPlayerTurn(); return; }
   promptMaou(heroes,0,()=>startPlayerTurn());
@@ -1224,7 +1299,10 @@ function resolveAbilityClick(r,c){
       const b=makePiece("kemono","P",r,c);
       b.flags.beastOf=p.id;
       G.pieces.push(b);
-      log("調教師が獣を召喚した（HP1）","p");sfx("place");
+      G.slotsLeft++;            // 召喚したターンから獣を行動させられる
+      G.currentActor=null;      // 行動駒のロックを解除して獣を選べるように
+      UI.sel=b.id;              // 召喚した獣を選択状態に
+      log("調教師が獣を召喚した（HP1）。このターンから獣を動かせる","p");sfx("place");
       break;}
     case "kagura":{
       const t=at(r,c);
@@ -2607,6 +2685,11 @@ function showStart(){
   cleanupNet();
   openModal("攻 城 戦",`
     <p style="text-align:center;letter-spacing:.1em;color:#d9cdb2">三つの駒で戦場へ。<br>敵の駒を二つ討ち取れば勝利。</p>
+    <label id="randomDealToggle" style="display:flex;align-items:center;justify-content:center;gap:8px;
+      margin:4px 0 10px;padding:8px;background:var(--panel2);border-radius:8px;cursor:pointer;font-size:14px">
+      <input type="checkbox" id="rndChk" style="width:18px;height:18px">
+      <span>🎲 ランダム配布モード（両者の駒3つを完全ランダムで配布）</span>
+    </label>
     <div class="ruleSec"><h3>ソロプレイ（AI対戦）</h3>
       <div class="choiceList">
         <button class="act" id="lvNormal">ふつう — 時々ゆるい手を指す</button>
@@ -2619,15 +2702,17 @@ function showStart(){
         <button class="act primary" id="btnHost">ルームを作る — コードを発行</button>
         <button class="act primary" id="btnJoin">ルームに参加 — コードを入力</button>
       </div>
-      <p style="color:var(--sub);font-size:12px;margin:6px 0 0">同じコードを入力した相手とリアルタイムで対戦できます。先手はランダムに決まります。</p>
+      <p style="color:var(--sub);font-size:12px;margin:6px 0 0">同じコードを入力した相手とリアルタイムで対戦できます。先手はランダムに決まります。オンラインではルームを作った側のランダム配布設定が適用されます。</p>
     </div>
     <p style="color:var(--sub);font-size:12px;text-align:center">右上の「？」でいつでもルールと駒一覧を確認できます。</p>
   `,[]);
-  $("#lvNormal").onclick=()=>{aiLevel="normal";closeModal();newGame();};
-  $("#lvHard").onclick=()=>{aiLevel="hard";closeModal();newGame();};
-  $("#lvMax").onclick=()=>{aiLevel="max";closeModal();newGame();};
-  $("#btnHost").onclick=()=>{closeModal();hostRoom();};
-  $("#btnJoin").onclick=()=>{closeModal();joinRoom();};
+  const rc=$("#rndChk"); if(rc)rc.checked=randomDeal;
+  const syncRnd=()=>{randomDeal=$("#rndChk").checked;};
+  $("#lvNormal").onclick=()=>{syncRnd();aiLevel="normal";closeModal();newGame();};
+  $("#lvHard").onclick=()=>{syncRnd();aiLevel="hard";closeModal();newGame();};
+  $("#lvMax").onclick=()=>{syncRnd();aiLevel="max";closeModal();newGame();};
+  $("#btnHost").onclick=()=>{syncRnd();closeModal();hostRoom();};
+  $("#btnJoin").onclick=()=>{syncRnd();closeModal();joinRoom();};
 }
 
 /* ---------- boot ---------- */
