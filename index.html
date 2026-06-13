@@ -225,6 +225,7 @@ const ALL8=[...ORTHO,...DIAG];
 let G=null;          // game state
 let UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
 let aiLevel="hard";
+let aiDepth=10; // 最強モードの探索プライ数
 let soundOn=true;
 let pid=1;
 const $=s=>document.querySelector(s);
@@ -1395,17 +1396,32 @@ function onCell(r,c){
    AI
    ========================================================= */
 const AI_POOL=["kenshi","kyuhei","kiba","senshi","souhei","sogeki","kyuketsuki","jusoshi"];
+/* 全24種を重み付きで抽選（強めの駒をやや厚く） */
+const AI_WEIGHTS={
+  kenshi:5, kyuhei:5, tatehei:4, kiba:5, senshi:6, jutsushi:3, wanashi:3,
+  ninja:4, kusushi:3, chokyo:2, gunshi:3, souhei:4, fushicho:4, jusoshi:3,
+  miko:3, esper:3, boken:2, kyuketsuki:5, sogeki:5, seishoku:2, majo:3,
+  bakudan:3, yusha:4, akuryo:3
+};
+function aiWeightedPick(exclude){
+  const pool=PICKABLE.filter(t=>!(exclude||[]).includes(t));
+  let total=0;for(const t of pool)total+=(AI_WEIGHTS[t]||2);
+  let r=Math.random()*total;
+  for(const t of pool){r-=(AI_WEIGHTS[t]||2);if(r<=0)return t;}
+  return pool[0];
+}
 function aiPickComposition(){
-  const ranged=["kyuhei","sogeki"][Math.random()<0.5?0:1];
-  const others=AI_POOL.filter(t=>t!=="kyuhei"&&t!=="sogeki");
-  const a=others[Math.floor(Math.random()*others.length)];
-  let b=others[Math.floor(Math.random()*others.length)];
-  if(b===a&&Math.random()<0.6)b=others[Math.floor(Math.random()*others.length)];
-  return [a,ranged,b];
+  // 遠距離を1枚は確保しつつ、残りは全24種から抽選
+  const ranged=Math.random()<0.5?"kyuhei":"sogeki";
+  const a=aiWeightedPick([ranged]);
+  const b=aiWeightedPick([ranged]); // 種類重複は許容（重なってもよい）
+  // 配置順をシャッフルして遠距離が必ず真ん中に来ないように
+  const arr=[a,ranged,b];
+  for(let i=arr.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]];}
+  return arr;
 }
 function aiPickRespawnType(){
-  const w=["senshi","senshi","kiba","sogeki","kyuhei","kenshi","souhei","kyuketsuki","jusoshi"];
-  return w[Math.floor(Math.random()*w.length)];
+  return aiWeightedPick([]);
 }
 function aiPlaceSetup(){
   const type=G.aiTypes[G.setupCount.E];
@@ -1524,14 +1540,503 @@ function startAITurn(){
   for(const p of alive("E")){
     p.ap=Math.max(0,p.maxAp-(p.flags.apCut?1:0));
     p.flags.apCut=false;
+    p.flags.usedFree=false;
   }
-  setPhaseBar('<span class="turnE">敵軍の手番 — 思考中…</span>');
+  setPhaseBar('<span class="turnE">敵軍の手番 — '+(aiLevel==="max"?"深く思考中…（最強・最大7秒）":"思考中…")+'</span>');
   UI={mode:"ai",sel:null,targets:new Set(),ability:null,extra:{}};
   render();
   setTimeout(()=>{
-    const plan=aiMakePlan();
+    let plan;
+    if(aiLevel==="max"){
+      const res=deepPlan();
+      if(res && res.resign && (!res.plan || planIsIdle(res.plan))){
+        // どの手も勝率0% → 投了を申請
+        offerResignation();
+        return;
+      }
+      plan=res?res.plan:null;
+      if(!plan || planIsIdle(plan)){
+        // 念のための保険：必ず行動する手を確保
+        plan=aiMakePlan();
+      }
+    }else{
+      plan=aiMakePlan();
+    }
     aiExecutePlan(plan);
   },650);
+}
+/* プランが「何もしない（移動なし・攻撃なし・能力なし）」かどうか */
+function planIsIdle(plan){
+  if(!plan)return true;
+  const hasMove=plan.path&&plan.path.length>0;
+  return !hasMove && !plan.ability && !plan.attack;
+}
+/* 投了申請モーダル：プレイヤーが承認すれば敗北として終局、しなければ行動を続行 */
+function offerResignation(){
+  setPhaseBar('<span class="turnE">敵軍 — 投了を申請しています…</span>');
+  openModal("敵軍の投了申請",`
+    <p style="text-align:center;line-height:1.7">
+      敵軍AIは現局面で<br><b style="color:var(--shu)">勝率0％</b>と判断し、<b>投了</b>を申請しました。</p>
+    <p style="text-align:center;color:var(--sub);font-size:13px">
+      承認すればあなたの勝利で終局します。<br>承認しない場合、敵軍は最後まで何らかの手を指して抵抗を続けます。</p>
+  `,[
+    {label:"投了を承認（あなたの勝ち）",cls:"primary",fn:()=>{closeModal();endGame("P");}},
+    {label:"承認しない（続行させる）",cls:"",fn:()=>{
+      closeModal();
+      // 投了を却下 → 必ず何らかの行動を取らせる
+      let plan=deepPlan().plan;
+      if(!plan||planIsIdle(plan))plan=aiMakePlan();
+      if(!plan||planIsIdle(plan)){
+        // それでも手がなければ静かにターンを返す
+        log("敵軍は抵抗を試みたが、指せる手がなかった","e");
+        finishAITurn();return;
+      }
+      aiExecutePlan(plan);
+    }}
+  ]);
+}
+/* 最強モード：探索結果(ssBestMove)を aiExecutePlan が解釈できる形へ変換 */
+/* 探索でモデル化済みの能力を持つ駒（これ以外は能力をヒューリスティックで補完） */
+const SS_ABILITY_MODELED=new Set(["kyuhei","sogeki","jusoshi"]);
+function deepPlan(){
+  const res=ssBestMove(aiDepth);
+  if(!res||!res.plan)return {plan:null, resign:!!(res&&res.resign)};
+  const best=res.plan;
+  const p=byId(best.pieceId);
+  if(!p)return {plan:null, resign:res.resign};
+  // 実際の盤面で目的地までの経路を取得
+  const reach=reachWithPaths(p);
+  const key=best.destR+","+best.destC;
+  let path=[],jump=false;
+  if(reach[key]){
+    path=reach[key].path||[];
+    jump=!!reach[key].jump;
+  }else{
+    path=[]; // その場 or 経路不能
+  }
+  let ability=best.ability;
+  // 探索が能力をモデル化していない駒は、移動後の局面でヒューリスティックに能力を補完
+  if(!ability && !SS_ABILITY_MODELED.has(p.type)){
+    ability=heuristicAbilityFor(p, best.destR, best.destC);
+  }
+  return {plan:{pieceId:best.pieceId, path, jump, ability, attack:best.attack, score:0}, resign:res.resign};
+}
+/* 指定駒が dest に移動した「と仮定して」最も有効な能力を1つ選ぶ（簡易） */
+function heuristicAbilityFor(p,dr,dc){
+  const foes=alive("P").filter(f=>!f.flags.invisible);
+  const allies=alive("E").filter(f=>f.id!==p.id);
+  const adj=(r,c)=>ORTHO.some(([a,b])=>r+a===dr&&c+b===dc);
+  switch(p.type){
+    case "jutsushi":{ // 行動阻害（行0）：最も行動力の高い敵を狙う
+      if(!foes.length)return null;
+      const t=foes.slice().sort((a,b)=>b.maxAp-a.maxAp)[0];
+      return {kind:"slow",targetId:t.id};
+    }
+    case "akuryo":{ // 攻撃封じ（行0）：最もHPの高い前衛を狙う
+      if(!foes.length)return null;
+      const t=foes.slice().sort((a,b)=>(b.hp-a.hp)||(Math.abs(b.r-dr)-Math.abs(a.r-dr)))[0];
+      return {kind:"bind",targetId:t.id};
+    }
+    case "kusushi":{ // 薬師：瀕死の味方を回復（隣接）。なければ敵にダメージ
+      const hurt=allies.filter(a=>a.hp<3&&Math.abs(a.r-dr)+Math.abs(a.c-dc)===1)
+                        .sort((a,b)=>a.hp-b.hp)[0];
+      if(hurt)return {kind:"heal",targetId:hurt.id};
+      const en=foes.filter(f=>Math.abs(f.r-dr)+Math.abs(f.c-dc)===1).sort((a,b)=>a.hp-b.hp)[0];
+      if(en)return {kind:"poison",targetId:en.id};
+      return null;
+    }
+    case "yusha":{ // 勇者：魔王が退場していれば近接特攻はsim側で扱う。ここでは何もしない
+      return null;
+    }
+    default:
+      return null; // 罠師/爆弾魔/調教師/軍師/巫女/魔女/超能力者/聖職者/不死鳥 等は移動・通常攻撃で運用
+  }
+}
+
+/* =========================================================
+   最強モード：アルファベータ探索（10手先読み）
+   独立した軽量シミュレータ上で手番交代を含む先読みを行う。
+   サポート駒：剣士/弓兵/騎馬/戦士/盾兵/狙撃手/吸血鬼/呪詛師
+   （AIプール＝この8種なので全手を厳密展開できる）
+   ========================================================= */
+const SS={ // 静的データ（全24種対応）
+  // 通常攻撃を持たない駒
+  noNormal:new Set(["kyuhei","sogeki","wanashi","chokyo","bakudan"]),
+  // 遠距離攻撃を「能力」として撃てる駒（探索で展開）
+  ranged:new Set(["kyuhei","sogeki"]),
+  // 行動力2の駒（騎馬・忍者・冒険者）
+  ap2:new Set(["kiba","ninja","boken"]),
+};
+const SS_MAXAP={kiba:2,ninja:2,boken:2};
+function ssClone(st){
+  return {
+    side:st.side, kP:st.kP, kE:st.kE,
+    ps:st.ps.map(p=>({id:p.id,t:p.t,o:p.o,r:p.r,c:p.c,hp:p.hp,
+      block:p.block?{r:p.block.r,c:p.block.c}:null,phoenix:p.phoenix,maxAp:p.maxAp,heroBoost:p.heroBoost}))
+  };
+}
+/* 現局面を探索用stateへ変換（プレイヤー手番開始時点を想定） */
+function ssFromGame(side){
+  const ps=G.pieces.filter(p=>!p.dead).map(p=>({
+    id:p.id,t:p.type,o:p.owner,r:p.r,c:p.c,hp:p.hp,
+    block:p.flags.block?{r:p.flags.block.r,c:p.flags.block.c}:null,
+    phoenix:!!p.flags.phoenix, maxAp:p.maxAp, heroBoost:!!p.flags.heroBoost
+  }));
+  return {side, kP:G.kills.P, kE:G.kills.E, ps};
+}
+const ssAt=(st,r,c)=>st.ps.find(p=>p.r===r&&p.c===c);
+function ssMoveDirs(t){ return (t==="kiba"||t==="ninja")?ALL8:ORTHO; }
+function ssColorOk(st,p,nr,nc){
+  // 自陣3駒が同じ色の陣に偏ってはいけない（列0-2:左 / 3-5:右）
+  const half=c=>c<3?0:1;
+  const h=half(nc);
+  let same=1;
+  for(const q of st.ps){ if(q.o===p.o&&q.id!==p.id&&half(q.c)===h) same++; }
+  return same<3;
+}
+function ssAtk(p,kind){
+  let d=1;
+  if(p.t==="kenshi")d+=0.5;
+  if(p.t==="senshi"){if(p.hp<=1)d+=2;else if(p.hp<=2)d+=1;}
+  if(p.t==="yusha"&&p.heroBoost&&kind==="melee")d=3;
+  return d;
+}
+function ssRangedCells(p,r,c){
+  const out=[];
+  if(p.t==="kyuhei"){
+    for(const [dr,dc] of ORTHO){out.push([r+dr,c+dc]);out.push([r+dr*2,c+dc*2]);}
+    for(const [dr,dc] of DIAG)out.push([r+dr,c+dc]);
+  }else if(p.t==="sogeki"){
+    for(const [dr,dc] of DIAG)for(let k=1;k<=3;k++)out.push([r+dr*k,c+dc*k]);
+  }
+  return out.filter(([rr,cc])=>inB(rr,cc));
+}
+function ssNormalCells(p){
+  if(SS.noNormal.has(p.t))return [];
+  let dirs;
+  if(p.t==="souhei")dirs=[...DIAG,[frontDr(p.o),0]];
+  else dirs=ORTHO;
+  return dirs.map(([dr,dc])=>[p.r+dr,p.c+dc]).filter(([r,c])=>inB(r,c));
+}
+/* ダメージ適用（撃破・不死鳥・吸血を処理）。撃破イベントを返す */
+function ssDealDamage(st,attacker,target,kind){
+  if(target.block&&attacker&&attacker.r===target.block.r&&attacker.c===target.block.c)return;
+  let d=ssAtk(attacker,kind);
+  let killed=target.hp-d<=0;
+  if(killed&&target.t==="fushicho"&&!target.phoenix){
+    target.phoenix=true;target.hp=0.5;killed=false;
+  }else{
+    target.hp=r2(target.hp-d);
+  }
+  if(attacker.t==="kyuketsuki"&&kind==="melee"&&attacker.hp<3){
+    attacker.hp=r2(Math.min(3,attacker.hp+0.5));
+  }
+  if(killed){
+    target.dead=true;
+    if(target.o==="P")st.kE++; else st.kP++;
+  }
+}
+function ssRemoveDead(st){ st.ps=st.ps.filter(p=>!p.dead); }
+function ssTerminal(st){ return st.kP>=2||st.kE>=2; }
+
+/* 1手番ぶんの合法手を列挙（移動+能力、その後ベスト通常攻撃を自動付与）
+   戻り値：適用後stateの配列。手番側=st.side */
+function ssGenerate(st){
+  const side=st.side;
+  const mine=st.ps.filter(p=>p.o===side);
+  const out=[];
+  const pushState=(ns)=>{
+    // 手番内のベスト通常攻撃を1回付与
+    ssBestAttack(ns,side);
+    ssRemoveDead(ns);
+    ns.side=(side==="P")?"E":"P";
+    out.push(ns);
+  };
+  for(const p of mine){
+    // 到達マス（BFS, 色制約あり）
+    const dests=ssReach(st,p);
+    for(const d of dests){
+      // 移動のみ
+      const ns=ssClone(st);
+      const np=ns.ps.find(x=>x.id===p.id);
+      np.r=d.r;np.c=d.c;
+      pushState(ns);
+      // 遠距離（弓兵・狙撃）：移動後に残APがあれば
+      if(SS.ranged.has(p.t)&&d.apLeft>=1){
+        const cells=ssRangedCells(np,d.r,d.c);
+        for(const [rr,cc] of cells){
+          const t=ssAt(ns,rr,cc);
+          if(t&&t.o!==side&&!(t.block)){
+            const ns2=ssClone(st);
+            const a2=ns2.ps.find(x=>x.id===p.id); a2.r=d.r;a2.c=d.c;
+            const t2=ns2.ps.find(x=>x.r===rr&&x.c===cc&&x.o!==side);
+            if(t2)ssDealDamage(ns2,a2,t2,"ranged");
+            pushState(ns2);
+          }
+        }
+      }
+      // 呪詛師：その場（cost0）で全体-0.5（HP>1.5）
+      if(p.t==="jusoshi"&&d.cost===0&&np.hp>1.5){
+        const ns3=ssClone(st);
+        const a3=ns3.ps.find(x=>x.id===p.id);
+        a3.hp=r2(a3.hp-1.5);
+        for(const t of ns3.ps.filter(x=>x.o!==side)){
+          let killed=t.hp-0.5<=0;
+          if(killed&&t.t==="fushicho"&&!t.phoenix){t.phoenix=true;t.hp=0.5;killed=false;}
+          else t.hp=r2(t.hp-0.5);
+          if(killed){t.dead=true;if(t.o==="P")ns3.kE++;else ns3.kP++;}
+        }
+        pushState(ns3);
+      }
+    }
+  }
+  if(out.length===0){ // 手詰まり：パス
+    const ns=ssClone(st);ssBestAttack(ns,side);ssRemoveDead(ns);
+    ns.side=(side==="P")?"E":"P";out.push(ns);
+  }
+  return out;
+}
+/* BFS到達（color制約・遮断あり）→ {r,c,cost,apLeft} */
+function ssReach(st,p){
+  const res={[p.r+","+p.c]:{cost:0}};
+  let frontier=[{r:p.r,c:p.c}];
+  const dirs=ssMoveDirs(p.t);
+  const occupied=(r,c)=>st.ps.some(q=>q.id!==p.id&&q.r===r&&q.c===c);
+  for(let s=0;s<p.maxAp;s++){
+    const nf=[];
+    for(const cur of frontier){
+      for(const [dr,dc] of dirs){
+        let nr=cur.r+dr,nc=cur.c+dc;
+        if(p.t==="boken")nc=(nc+6)%6; // 冒険者：左右ループ
+        if(!inB(nr,nc))continue;
+        const k=nr+","+nc;
+        if(res[k])continue;
+        if(occupied(nr,nc))continue;
+        if(!ssColorOk(st,p,nr,nc))continue;
+        res[k]={cost:res[cur.r+","+cur.c].cost+1};
+        nf.push({r:nr,c:nc});
+      }
+    }
+    frontier=nf;
+  }
+  // 騎馬跳躍
+  if(p.t==="kiba"&&p.maxAp>=2){
+    for(const [dr,dc] of ALL8){
+      const mr=p.r+dr,mc=p.c+dc,nr=p.r+dr*2,nc=p.c+dc*2;
+      if(!inB(mr,mc)||!inB(nr,nc))continue;
+      if(!occupied(mr,mc))continue;
+      if(occupied(nr,nc))continue;
+      if(!ssColorOk(st,p,nr,nc))continue;
+      const k=nr+","+nc;
+      if(!res[k]||res[k].cost>2)res[k]={cost:2};
+    }
+  }
+  return Object.keys(res).map(k=>{
+    const [r,c]=k.split(",").map(Number);
+    return {r,c,cost:res[k].cost,apLeft:p.maxAp-res[k].cost};
+  });
+}
+/* 手番側のベスト通常攻撃を1回だけ適用 */
+function ssBestAttack(st,side){
+  let best=null,bs=-1;
+  for(const a of st.ps.filter(x=>x.o===side&&!SS.noNormal.has(x.t))){
+    for(const [r,c] of ssNormalCells(a)){
+      const t=st.ps.find(x=>x.r===r&&x.c===c&&x.o!==side);
+      if(!t)continue;
+      if(t.block&&a.r===t.block.r&&a.c===t.block.c)continue;
+      const d=ssAtk(a,"melee");
+      const kills=t.hp-d<=0&&!(t.t==="fushicho"&&!t.phoenix);
+      const s=(kills?1000:0)+d*200+(3-Math.max(0,t.hp-d))*40;
+      if(s>bs){bs=s;best={a,t};}
+    }
+  }
+  if(best)ssDealDamage(st,best.a,best.t,"melee");
+}
+
+/* 静的評価（E視点：高いほどEに有利） */
+function ssEval(st){
+  if(st.kE>=2)return 1e7;
+  if(st.kP>=2)return -1e7;
+  let v=(st.kE-st.kP)*5000;
+  const eP=st.ps.filter(p=>p.o==="E"), pP=st.ps.filter(p=>p.o==="P");
+  // 駒の存在＋HP総量（E加点・P減点）
+  for(const p of eP)v+=120+p.hp*80;
+  for(const p of pP)v-=120+p.hp*80;
+  // 攻め圧：相手への最短マンハッタン距離が近い駒ほど主導権
+  const dist=(a,arr)=>{let m=99;for(const b of arr)m=Math.min(m,Math.abs(a.r-b.r)+Math.abs(a.c-b.c));return m;};
+  for(const p of eP){ if(pP.length)v-=dist(p,pP)*10; }
+  for(const p of pP){ if(eP.length)v+=dist(p,eP)*6; }
+  // 瀕死の相手は仕留めやすい→僅かに加点
+  for(const p of pP)if(p.hp<=1)v+=60;
+  for(const p of eP)if(p.hp<=1)v-=60;
+  return v;
+}
+
+/* negamax + alpha-beta。時間制限・ノード上限つき */
+let ssNodes=0, ssDeadline=0, ssAbort=false;
+const SS_NODE_CAP=2600000;
+function ssSearch(st,depth,alpha,beta){
+  if(ssAbort)return ssEval(st);
+  if(ssTerminal(st)||depth<=0){
+    return ssEval(st);
+  }
+  if((++ssNodes&1023)===0){
+    if(ssNodes>SS_NODE_CAP||performance.now()>ssDeadline){ssAbort=true;return ssEval(st);}
+  }
+  let children=ssGenerate(st);
+  // ムーブオーダリング＆幅制限（深いほど狭く）
+  const width=depth>=6?10:depth>=3?12:16;
+  if(children.length>width){
+    children.sort((a,b)=> (st.side==="E"? ssEval(b)-ssEval(a) : ssEval(a)-ssEval(b)) );
+    children=children.slice(0,width);
+  }
+  if(st.side==="E"){
+    let best=-Infinity;
+    for(const ch of children){
+      const v=ssSearch(ch,depth-1,alpha,beta);
+      if(v>best)best=v;
+      if(best>alpha)alpha=best;
+      if(alpha>=beta)break;
+      if(ssAbort)break;
+    }
+    return best;
+  }else{
+    let best=Infinity;
+    for(const ch of children){
+      const v=ssSearch(ch,depth-1,alpha,beta);
+      if(v<best)best=v;
+      if(best<beta)beta=best;
+      if(alpha>=beta)break;
+      if(ssAbort)break;
+    }
+    return best;
+  }
+}
+/* 最善のE手番を選ぶ。反復深化で目標プライまで、時間予算内で深掘り */
+function ssBestMove(maxDepth){
+  const root=ssFromGame("E");
+  const side="E";
+  const mine=root.ps.filter(p=>p.o===side);
+  // ルート手の列挙（実行可能プランを保持）
+  const rootMoves=[];
+  for(const p of mine){
+    const dests=ssReach(root,p);
+    for(const d of dests){
+      rootMoves.push({pieceId:p.id,dr:d.r,dc:d.c,cost:d.cost,apLeft:d.apLeft,ability:null});
+      if(SS.ranged.has(p.t)&&d.apLeft>=1){
+        const np={...p,r:d.r,c:d.c};
+        for(const [rr,cc] of ssRangedCells(np,d.r,d.c)){
+          const t=ssAt(root,rr,cc);
+          if(t&&t.o!==side&&!t.block)rootMoves.push({pieceId:p.id,dr:d.r,dc:d.c,cost:d.cost,apLeft:d.apLeft,ability:{kind:"ranged",tr:rr,tc:cc}});
+        }
+      }
+      if(p.t==="jusoshi"&&d.cost===0&&p.hp>1.5){
+        rootMoves.push({pieceId:p.id,dr:d.r,dc:d.c,cost:0,apLeft:d.apLeft,ability:{kind:"curse"}});
+      }
+    }
+  }
+  if(rootMoves.length===0)return {resign:false, plan:null, allLose:false};
+
+  // 各ルート手を適用した「子state」と実行用メタを事前生成
+  const applied=rootMoves.map(mv=>{
+    const ns=ssClone(root);
+    const np=ns.ps.find(x=>x.id===mv.pieceId);
+    const origin=root.ps.find(x=>x.id===mv.pieceId);
+    np.r=mv.dr;np.c=mv.dc;
+    if(mv.ability&&mv.ability.kind==="ranged"){
+      const t=ns.ps.find(x=>x.r===mv.ability.tr&&x.c===mv.ability.tc&&x.o!=="E");
+      if(t)ssDealDamage(ns,np,t,"ranged");
+    }else if(mv.ability&&mv.ability.kind==="curse"){
+      np.hp=r2(np.hp-1.5);
+      for(const t of ns.ps.filter(x=>x.o!=="E")){
+        let killed=t.hp-0.5<=0;
+        if(killed&&t.t==="fushicho"&&!t.phoenix){t.phoenix=true;t.hp=0.5;killed=false;}
+        else t.hp=r2(t.hp-0.5);
+        if(killed){t.dead=true;ns.kP++;}
+      }
+    }
+    const atk=ssBestAttackPlan(ns,"E");
+    ssRemoveDead(ns);
+    ns.side="P";
+    const jump=(np.t==="kiba"&&mv.cost===2&&(Math.abs(mv.dr-origin.r)+Math.abs(mv.dc-origin.c))>1);
+    // 移動・攻撃・能力のいずれかを伴う「実質的な行動」かどうか
+    const moved=(mv.dr!==origin.r||mv.dc!==origin.c);
+    const acts=moved||!!mv.ability||!!atk;
+    return {state:ns, acts, plan:{pieceId:mv.pieceId,destR:mv.dr,destC:mv.dc,cost:mv.cost,jump,ability:mv.ability,attack:atk}};
+  });
+
+  // --- 即時フォールバック：浅い静的評価で必ず「行動を伴う」最善手を確保 ---
+  // （深い探索が時間切れでも、何もしない手には絶対に落ちないようにする）
+  let fbBest=-Infinity, fbPlan=null;
+  for(const a of applied){
+    if(!a.acts)continue; // 「何もしない」候補は除外
+    const v=ssEval(a.state)+Math.random()*2;
+    if(v>fbBest){fbBest=v;fbPlan=a.plan;}
+  }
+  // 行動を伴う候補が皆無なら（理論上ほぼ無い）行動なしでも最善を取る
+  if(!fbPlan){
+    for(const a of applied){const v=ssEval(a.state);if(v>fbBest){fbBest=v;fbPlan=a.plan;}}
+  }
+
+  ssDeadline=performance.now()+6500; // 最大約6.5秒の思考予算（上限7秒）
+  let bestPlan=fbPlan;        // ★初期値を「何もしない」ではなく浅い最善手に
+  let bestVal=fbBest;
+  let order=applied.map((_,i)=>i);
+  const valById={};          // 各ルート手の最深評価値を記録（投了判定用）
+
+  for(let depth=2; depth<=maxDepth; depth++){
+    ssAbort=false; ssNodes=0;
+    let localBest=-Infinity, localPlan=null;
+    const scored=[];
+    let completedAny=false;
+    for(const idx of order){
+      const node=applied[idx];
+      const v=ssSearch(node.state, depth-1, -Infinity, Infinity);
+      if(ssAbort){break;} // この手は読み切れていない → 記録しない
+      completedAny=true;
+      scored.push({idx,v});
+      valById[idx]=v;
+      // 「行動を伴う手」を優先採用（同評価なら行動ありを選ぶ）
+      const better = v>localBest+1e-9 || (Math.abs(v-localBest)<=1e-9 && node.acts);
+      if(localPlan===null || better){
+        if(node.acts || localPlan===null){ localBest=v; localPlan=node.plan; }
+      }
+    }
+    if(completedAny && localPlan){
+      bestPlan=localPlan; bestVal=localBest;
+      scored.sort((a,b)=>b.v-a.v);
+      order=scored.map(s=>s.idx).concat(order.filter(i=>!scored.find(s=>s.idx===i)));
+      if(localBest>=1e6)break; // 勝ち確定
+    }
+    if(performance.now()>ssDeadline)break;
+  }
+
+  // --- 投了判定：読み切れた全候補が「敗北確定（-1e6以下）」なら勝率0% ---
+  const evaluated=Object.values(valById);
+  const allLose = evaluated.length>0 && evaluated.every(v=>v<=-1e6);
+
+  return {resign:allLose, plan:bestPlan, allLose};
+}
+/* ベスト通常攻撃のプランを返す（state適用も行う） */
+function ssBestAttackPlan(st,side){
+  let best=null,bs=-1;
+  for(const a of st.ps.filter(x=>x.o===side&&!SS.noNormal.has(x.t))){
+    for(const [r,c] of ssNormalCells(a)){
+      const t=st.ps.find(x=>x.r===r&&x.c===c&&x.o!==side);
+      if(!t)continue;
+      if(t.block&&a.r===t.block.r&&a.c===t.block.c)continue;
+      const d=ssAtk(a,"melee");
+      const kills=t.hp-d<=0&&!(t.t==="fushicho"&&!t.phoenix);
+      const s=(kills?1000:0)+d*200+(3-Math.max(0,t.hp-d))*40;
+      if(s>bs){bs=s;best={a,t};}
+    }
+  }
+  if(best){
+    const aid=best.a.id,tid=best.t.id;
+    ssDealDamage(st,best.a,best.t,"melee");
+    return {attackerId:aid,targetId:tid};
+  }
+  return null;
 }
 
 function aiMakePlan(){
@@ -1699,8 +2204,9 @@ function aiExecutePlan(plan){
         if(plan.ability.kind==="ranged"){
           steps.push(()=>{
             if(p.dead||p.ap<1)return;
-            const t=byId(plan.ability.targetId);
-            if(!t||t.flags.invisible)return;
+            let t=plan.ability.targetId?byId(plan.ability.targetId):null;
+            if(!t&&plan.ability.tr!=null)t=visAt(plan.ability.tr,plan.ability.tc,"E");
+            if(!t||t.flags.invisible||t.owner!=="P")return;
             if(!rangedCellsFrom(p,p.r,p.c).some(([r,c])=>r===t.r&&c===t.c))return;
             p.ap--;
             performAttack(p,t,"ranged");
@@ -1711,6 +2217,40 @@ function aiExecutePlan(plan){
             p.hp=r2(p.hp-1.5);
             log("敵の呪詛師が呪いを放った！（敵全体HP-0.5）","e");
             for(const t of alive("P"))dealDamage(t,0.5,null,"curse");
+          });
+        }else if(plan.ability.kind==="slow"){
+          steps.push(()=>{
+            if(p.dead||p.flags.usedFree)return;
+            const t=byId(plan.ability.targetId);
+            if(!t||t.flags.invisible||t.owner!=="P")return;
+            p.flags.usedFree=true;t.flags.apCut=true;
+            log(`敵の術士の呪い…${pieceLabel(t)}の次ターン行動力-1`,"e");sfx("pick");
+          });
+        }else if(plan.ability.kind==="bind"){
+          steps.push(()=>{
+            if(p.dead||p.flags.usedFree)return;
+            const t=byId(plan.ability.targetId);
+            if(!t||t.flags.invisible||t.owner!=="P")return;
+            p.flags.usedFree=true;t.flags.noAttack=true;
+            log(`敵の悪霊が取り憑いた…${pieceLabel(t)}は次の手番、通常攻撃不可`,"e");sfx("pick");
+          });
+        }else if(plan.ability.kind==="heal"){
+          steps.push(()=>{
+            if(p.dead||p.ap<1||p.flags.healUsed)return;
+            const t=byId(plan.ability.targetId);
+            if(!t||t.owner!=="E"||Math.abs(t.r-p.r)+Math.abs(t.c-p.c)!==1)return;
+            p.ap--;p.flags.healUsed=true;
+            healPiece(t,1);
+            log(`敵の薬師が${pieceLabel(t)}を癒した`,"e");sfx("heal");
+          });
+        }else if(plan.ability.kind==="poison"){
+          steps.push(()=>{
+            if(p.dead||p.ap<1||p.flags.healUsed)return;
+            const t=byId(plan.ability.targetId);
+            if(!t||t.owner!=="P"||t.flags.invisible||Math.abs(t.r-p.r)+Math.abs(t.c-p.c)!==1)return;
+            p.ap--;p.flags.healUsed=true;
+            dealDamage(t,1,p,"poison");
+            log(`敵の薬師が${pieceLabel(t)}に毒を盛った`,"e");sfx("hit");
           });
         }
       }
@@ -1981,7 +2521,8 @@ function showStart(){
     <div class="ruleSec"><h3>ソロプレイ（AI対戦）</h3>
       <div class="choiceList">
         <button class="act" id="lvNormal">ふつう — 時々ゆるい手を指す</button>
-        <button class="act" id="lvHard">つよい — 常に最善を狙う</button>
+        <button class="act" id="lvHard">つよい — 常に最善の1手</button>
+        <button class="act" id="lvMax">★最強★ — 10手先を読む深層思考</button>
       </div>
     </div>
     <div class="ruleSec"><h3>オンライン対戦（ルームコード）</h3>
@@ -1995,6 +2536,7 @@ function showStart(){
   `,[]);
   $("#lvNormal").onclick=()=>{aiLevel="normal";closeModal();newGame();};
   $("#lvHard").onclick=()=>{aiLevel="hard";closeModal();newGame();};
+  $("#lvMax").onclick=()=>{aiLevel="max";closeModal();newGame();};
   $("#btnHost").onclick=()=>{closeModal();hostRoom();};
   $("#btnJoin").onclick=()=>{closeModal();joinRoom();};
 }
