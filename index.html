@@ -1622,6 +1622,54 @@ function deepPlan(){
   return {plan:{pieceId:best.pieceId, path, jump, ability, attack:best.attack, score:0}, resign:res.resign};
 }
 /* 指定駒が dest に移動した「と仮定して」最も有効な能力を1つ選ぶ（簡易） */
+/* 魔女の入替プラン：味方同士 or 敵同士を入れ替えて最も得をする組を選ぶ */
+function witchPlan(witch){
+  const eAll=alive("E").filter(p=>p.id!==witch.id);
+  const pAll=alive("P").filter(p=>!p.flags.invisible);
+  // あるマスがプレイヤーの通常攻撃圏内か（簡易判定）
+  const inDanger=(r,c)=>{
+    for(const f of pAll){
+      const dr=Math.abs(f.r-r), dc=Math.abs(f.c-c), man=dr+dc;
+      if(f.flags.noAttack)continue; // 封じ中は脅威が薄い
+      if(f.type==="kyuhei"&&man<=2)return true;
+      if(f.type==="sogeki"&&dr===dc&&dr<=3)return true;
+      if(f.type==="souhei"&&((dr===1&&dc===1)||(dc===0&&dr===1)))return true; // 槍兵：斜め＋正面
+      if(man===1)return true; // 通常隣接
+    }
+    return false;
+  };
+  const risk=p=>(inDanger(p.r,p.c)?1:0)*(4-p.hp);
+  const distTo=(r,c)=>{let m=99;for(const f of pAll)m=Math.min(m,Math.abs(f.r-r)+Math.abs(f.c-c));return m;};
+  let best=null,bestGain=0.5; // しきい値：少しでも得なら使う
+  // (a) 味方ペア入替：危険な味方を安全マスへ、攻撃役を前へ
+  for(let i=0;i<eAll.length;i++)for(let j=i+1;j<eAll.length;j++){
+    const a=eAll[i],b=eAll[j];
+    const before=risk(a)+risk(b);
+    const afterA=(inDanger(b.r,b.c)?1:0)*(4-a.hp);
+    const afterB=(inDanger(a.r,a.c)?1:0)*(4-b.hp);
+    const after=afterA+afterB;
+    const aggrBefore=(SS_ATTACKER.has(a.type)?-distTo(a.r,a.c):0)+(SS_ATTACKER.has(b.type)?-distTo(b.r,b.c):0);
+    const aggrAfter =(SS_ATTACKER.has(a.type)?-distTo(b.r,b.c):0)+(SS_ATTACKER.has(b.type)?-distTo(a.r,a.c):0);
+    const gain=(before-after)+(aggrAfter-aggrBefore)*0.25;
+    if(gain>bestGain){bestGain=gain;best={kind:"swap",aId:a.id,bId:b.id};}
+  }
+  // (b) 敵ペア入替：瀕死の敵をこちらの攻撃役の隣へ引き出す
+  for(let i=0;i<pAll.length;i++)for(let j=i+1;j<pAll.length;j++){
+    const a=pAll[i],b=pAll[j];
+    const myAtk=eAll.filter(e=>SS_ATTACKER.has(e.type));
+    const nearMy=(r,c)=>myAtk.some(e=>Math.abs(e.r-r)+Math.abs(e.c-c)===1);
+    const weak=a.hp<=1?a:(b.hp<=1?b:null);
+    if(!weak)continue;
+    const other=weak===a?b:a;
+    if(!nearMy(weak.r,weak.c)&&nearMy(other.r,other.c)){
+      const gain=1.2*(2-weak.hp);
+      if(gain>bestGain){bestGain=gain;best={kind:"swap",aId:a.id,bId:b.id};}
+    }
+  }
+  return best;
+}
+const SS_ATTACKER=new Set(["kenshi","senshi","kiba","souhei","kyuketsuki","yusha","ninja"]);
+
 function heuristicAbilityFor(p,dr,dc){
   const foes=alive("P").filter(f=>!f.flags.invisible);
   const allies=alive("E").filter(f=>f.id!==p.id);
@@ -1637,13 +1685,23 @@ function heuristicAbilityFor(p,dr,dc){
       const t=foes.slice().sort((a,b)=>(b.hp-a.hp)||(Math.abs(b.r-dr)-Math.abs(a.r-dr)))[0];
       return {kind:"bind",targetId:t.id};
     }
-    case "kusushi":{ // 薬師：瀕死の味方を回復（隣接）。なければ敵にダメージ
+    case "kusushi":{ // 薬師：①隣接敵を毒1で倒せるなら最優先 ②瀕死の味方を回復 ③隣接敵に毒
+      const adjFoes=foes.filter(f=>Math.abs(f.r-dr)+Math.abs(f.c-dc)===1);
+      // ①トドメ：毒1ダメで撃破できる敵（HP<=1。不死鳥の初回復活は考慮）
+      const lethal=adjFoes.filter(f=>f.hp<=1&&!(f.type==="fushicho"&&!f.flags.phoenix))
+                          .sort((a,b)=>a.hp-b.hp)[0];
+      if(lethal)return {kind:"poison",targetId:lethal.id};
+      // ②瀕死の味方を回復
       const hurt=allies.filter(a=>a.hp<3&&Math.abs(a.r-dr)+Math.abs(a.c-dc)===1)
                         .sort((a,b)=>a.hp-b.hp)[0];
       if(hurt)return {kind:"heal",targetId:hurt.id};
-      const en=foes.filter(f=>Math.abs(f.r-dr)+Math.abs(f.c-dc)===1).sort((a,b)=>a.hp-b.hp)[0];
+      // ③それ以外は隣接敵に毒（HPの低い順）
+      const en=adjFoes.sort((a,b)=>a.hp-b.hp)[0];
       if(en)return {kind:"poison",targetId:en.id};
       return null;
+    }
+    case "majo":{ // 魔女：リスク回避 or 有利対面構築のための入替
+      return witchPlan(p);
     }
     case "yusha":{ // 勇者：魔王が退場していれば近接特攻はsim側で扱う。ここでは何もしない
       return null;
@@ -1869,6 +1927,26 @@ function ssEval(st){
   // 瀕死の相手は仕留めやすい→僅かに加点
   for(const p of pP)if(p.hp<=1)v+=60;
   for(const p of eP)if(p.hp<=1)v-=60;
+  // --- プレイヤーの術士／悪霊の妨害リスクを考慮 ---
+  // 術士が生存していれば、AIの主力（行動力2や高HP前衛）が次手番に減速される恐れ→過度な突出を割り引く
+  const pJutsu=pP.some(p=>p.t==="jutsushi");
+  const pAkuryo=pP.some(p=>p.t==="akuryo");
+  if(pJutsu){
+    for(const p of eP){
+      // 行動力2の駒や、相手陣に踏み込んだ駒ほど減速の影響が大きい
+      const exposure=(p.maxAp>=2?1.4:1.0)*Math.max(0,(4-dist(p,pP)));
+      v-=exposure*9;
+    }
+  }
+  if(pAkuryo){
+    for(const p of eP){
+      // 通常攻撃役（近接アタッカー）が封じられると痛い→相手に密着しすぎる前衛を割り引く
+      if(!SS.noNormal.has(p.t)){
+        const exposure=Math.max(0,(3-dist(p,pP)));
+        v-=exposure*8;
+      }
+    }
+  }
   return v;
 }
 
@@ -2242,6 +2320,17 @@ function aiExecutePlan(plan){
             p.ap--;p.flags.healUsed=true;
             healPiece(t,1);
             log(`敵の薬師が${pieceLabel(t)}を癒した`,"e");sfx("heal");
+          });
+        }else if(plan.ability.kind==="swap"){
+          steps.push(()=>{
+            if(p.dead||p.ap<1)return;
+            const a=byId(plan.ability.aId), b=byId(plan.ability.bId);
+            if(!a||!b||a.owner!==b.owner)return;
+            if((a.flags.invisible&&a.owner!=="E")||(b.flags.invisible&&b.owner!=="E"))return;
+            p.ap--;
+            const ar=a.r,ac=a.c; a.r=b.r;a.c=b.c; b.r=ar;b.c=ac;
+            log(`敵の魔女の入替魔法！${PIECES[a.type].name}と${PIECES[b.type].name}が入れ替わった`,"e");
+            sfx("move");
           });
         }else if(plan.ability.kind==="poison"){
           steps.push(()=>{
