@@ -61,10 +61,16 @@ h1 small{font-size:11px;letter-spacing:.15em;color:var(--sub);display:block;marg
 .cell.hl-sel .hl{box-shadow:inset 0 0 0 3px #fff;}
 @keyframes pulse{0%,100%{opacity:.95}50%{opacity:.45}}
 
-.marker{position:absolute;z-index:2;pointer-events:none;font-size:13px}
-.mk-trap{left:2px;top:1px;color:#7a2c14;text-shadow:0 0 2px #fff}
-.mk-bomb{right:2px;top:1px}
-.mk-block{left:50%;top:50%;transform:translate(-50%,-50%);font-size:20px;color:rgba(40,60,150,.8)}
+/* マーカー（爆弾・罠・盾）：セル下部に横並びで自動整列 */
+.mkRow{position:absolute;left:0;right:0;bottom:2px;z-index:6;
+  display:flex;justify-content:center;align-items:flex-end;gap:2px;pointer-events:none}
+.marker{display:flex;align-items:center;justify-content:center;
+  width:clamp(15px,4.6vw,22px);height:clamp(15px,4.6vw,22px);
+  border-radius:5px;font-size:clamp(11px,3.4vw,16px);line-height:1;
+  box-shadow:0 1px 3px rgba(0,0,0,.55);border:1px solid rgba(0,0,0,.35)}
+.mk-trap{background:#b23a1a;color:#fff;text-shadow:0 0 2px rgba(0,0,0,.6)}
+.mk-bomb{background:#222;color:#ffcf3f}
+.mk-block{background:#2b3da0;color:#fff}
 
 .piece{position:absolute;left:7%;top:6%;width:86%;height:88%;z-index:4;
   clip-path:polygon(50% 0%,96% 28%,84% 100%,16% 100%,4% 28%);
@@ -942,8 +948,8 @@ function enterSquare(p,nr,nc){
   if(ti>=0){
     G.traps.splice(ti,1);
     sfx("trap");
-    log(`${pieceLabel(p)}は罠にかかった！（1ダメ・行動力-1）`,"s");
-    p.ap=Math.max(0,p.ap-1);
+    log(`${pieceLabel(p)}は罠にかかった！（1ダメ・次のターン行動力-1）`,"s");
+    p.flags.apCut=true; // 次のターン開始時に行動力-1
     dealDamage(p,1,null,"trap");
     if(p.dead)return "dead";
   }
@@ -1006,7 +1012,28 @@ function startPlayerTurn(){
     p.flags.usedFree=false;
   }
   UI={mode:"action",sel:null,targets:new Set(),ability:null,extra:{}};
+  // 手番開始時点のスナップショットを保存（攻撃フェーズ移行前ならやり直し可能）
+  saveTurnSnapshot();
   setPhaseBar('<span class="turnP">あなたの手番 — 行動フェーズ（駒1体を選んで移動／能力）</span>');
+  render();
+}
+let turnSnapshot=null;
+function saveTurnSnapshot(){
+  if(NET.on){turnSnapshot=null;return;} // オンライン対戦ではやり直し不可
+  turnSnapshot=JSON.stringify({
+    pieces:G.pieces, traps:G.traps, bombs:G.bombs,
+    kills:G.kills, pid:pid
+  });
+}
+function restoreTurnSnapshot(){
+  if(!turnSnapshot)return;
+  const s=JSON.parse(turnSnapshot);
+  G.pieces=s.pieces.map(p=>({...p,flags:{...p.flags}}));
+  G.traps=s.traps; G.bombs=s.bombs; G.kills=s.kills; pid=s.pid;
+  G.slotsLeft=1; G.currentActor=null; G.attackUsed=false; G.acted=false;
+  G.phase="action"; G.turn="P";
+  UI={mode:"action",sel:null,targets:new Set(),ability:null,extra:{}};
+  log("手番をやり直しました","s");
   render();
 }
 function gotoAttackPhase(){
@@ -1076,6 +1103,11 @@ function explodeBombs(owner,cont){
   for(const b of ready){
     sfx("bomb");
     log(`爆弾が炸裂！`, "s");
+    // 爆弾マス自身に乗っている駒へのダメージ
+    const onBomb=at(b.r,b.c);
+    if(onBomb)dealDamage(onBomb,1,null,"bomb");
+    if(G.over)return;
+    // 周囲8マス
     for(const [dr,dc] of ALL8){
       const t=at(b.r+dr,b.c+dc);
       if(t)dealDamage(t,1,null,"bomb");
@@ -2504,16 +2536,16 @@ function render(){
     if(jumpSet.has(key))cell.classList.add("hl-jump");
     if(atkSet.has(key))cell.classList.add("hl-atk");
     const hl=document.createElement("div");hl.className="hl";cell.appendChild(hl);
-    // markers
-    for(const t of G.traps)if(t.r===r&&t.c===c&&t.owner==="P"){
-      const m=document.createElement("div");m.className="marker mk-trap";m.textContent="✕";cell.appendChild(m);
-    }
-    for(const b of G.bombs)if(b.r===r&&b.c===c){
-      const m=document.createElement("div");m.className="marker mk-bomb";m.textContent="💣";cell.appendChild(m);
-    }
-    for(const p of G.pieces)if(!p.dead&&p.flags.block&&p.flags.block.r===r&&p.flags.block.c===c){
-      const m=document.createElement("div");m.className="marker mk-block";m.textContent="⛨";cell.appendChild(m);
-    }
+    // markers（爆弾・罠・盾をセル下部に横並びで整頓表示）
+    const mkRow=document.createElement("div");mkRow.className="mkRow";
+    const addMk=(cls,txt,title)=>{
+      const m=document.createElement("div");m.className="marker "+cls;
+      m.textContent=txt;m.title=title||"";mkRow.appendChild(m);
+    };
+    for(const t of G.traps)if(t.r===r&&t.c===c&&t.owner==="P"){ addMk("mk-trap","✕","罠"); }
+    for(const b of G.bombs)if(b.r===r&&b.c===c){ addMk("mk-bomb","💣","爆弾"); }
+    for(const p of G.pieces)if(!p.dead&&p.flags.block&&p.flags.block.r===r&&p.flags.block.c===c){ addMk("mk-block","🛡","盾の防御"); }
+    if(mkRow.children.length)cell.appendChild(mkRow);
     const p=at(r,c);
     if(p&&!(p.flags.invisible&&p.owner==="E")){
       const d=document.createElement("div");
@@ -2571,6 +2603,10 @@ function renderCtrl(){
       const mustAct=!G.acted&&hasAnyPlayerAction();
       const apLeft=actorCanStillAct();
       btn(mustAct?"攻撃フェーズへ（要：駒1体の行動）":apLeft?"攻撃フェーズへ（行動力を使い切る）":"攻撃フェーズへ","primary",()=>gotoAttackPhase(),mustAct||apLeft);
+      // 何か動かした後なら手番をやり直せる（攻撃フェーズ移行前まで）
+      if(G.acted && turnSnapshot){
+        btn("↩ 手番をやり直す","",()=>restoreTurnSnapshot());
+      }
     }else if(UI.mode==="ability"){
       btn("キャンセル","",()=>{clearAbility();render();});
     }else if(UI.mode==="attack"){
