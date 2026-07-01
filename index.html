@@ -60,6 +60,10 @@ h1 small{font-size:11px;letter-spacing:.15em;color:var(--sub);display:block;marg
 .cell.hl-tgt .hl{box-shadow:inset 0 0 0 3px rgba(231,196,87,.95);background:rgba(231,196,87,.28);animation:pulse 1.1s infinite}
 .cell.hl-sel .hl{box-shadow:inset 0 0 0 3px #fff;}
 @keyframes pulse{0%,100%{opacity:.95}50%{opacity:.45}}
+.spinner{display:inline-block;width:14px;height:14px;vertical-align:-2px;margin-right:6px;
+  border:2px solid rgba(201,165,63,.3);border-top-color:var(--gold);border-radius:50%;
+  animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 
 /* マーカー（爆弾・罠・盾）：セル下部に横並びで自動整列 */
 .mkRow{position:absolute;left:0;right:0;bottom:2px;z-index:6;
@@ -1679,27 +1683,24 @@ function startAITurn(){
     p.flags.apCut=false;
     p.flags.usedFree=false;
   }
-  setPhaseBar('<span class="turnE">敵軍の手番 — '+(aiLevel==="max"?"深く思考中…（最強・最大7秒）":"思考中…")+'</span>');
+  setPhaseBar('<span class="turnE"><span class="spinner"></span>敵軍の手番 — '+(aiLevel==="max"?"深く思考中…（最強・最大7秒）":"思考中…")+'</span>');
   UI={mode:"ai",sel:null,targets:new Set(),ability:null,extra:{}};
   render();
   setTimeout(()=>{
-    let plan;
     if(aiLevel==="max"){
-      const res=deepPlan();
-      if(res && res.resign && (!res.plan || planIsIdle(res.plan))){
-        // どの手も勝率0% → 投了を申請
-        offerResignation();
-        return;
-      }
-      plan=res?res.plan:null;
-      if(!plan || planIsIdle(plan)){
-        // 念のための保険：必ず行動する手を確保
-        plan=aiMakePlan();
-      }
+      deepPlanAsync((res)=>{
+        if(res && res.resign && (!res.plan || planIsIdle(res.plan))){
+          offerResignation();
+          return;
+        }
+        let plan=res?res.plan:null;
+        if(!plan || planIsIdle(plan)) plan=aiMakePlan();
+        aiExecutePlan(plan);
+      });
     }else{
-      plan=aiMakePlan();
+      const plan=aiMakePlan();
+      aiExecutePlan(plan);
     }
-    aiExecutePlan(plan);
   },650);
 }
 /* プランが「何もしない（移動なし・攻撃なし・能力なし）」かどうか */
@@ -1735,28 +1736,27 @@ function offerResignation(){
 /* 最強モード：探索結果(ssBestMove)を aiExecutePlan が解釈できる形へ変換 */
 /* 探索でモデル化済みの能力を持つ駒（これ以外は能力をヒューリスティックで補完） */
 const SS_ABILITY_MODELED=new Set(["kyuhei","sogeki","jusoshi"]);
-function deepPlan(){
-  const res=ssBestMove(aiDepth);
+function deepPlanFromRes(res){
   if(!res||!res.plan)return {plan:null, resign:!!(res&&res.resign)};
   const best=res.plan;
   const p=byId(best.pieceId);
   if(!p)return {plan:null, resign:res.resign};
-  // 実際の盤面で目的地までの経路を取得
   const reach=reachWithPaths(p);
   const key=best.destR+","+best.destC;
   let path=[],jump=false;
-  if(reach[key]){
-    path=reach[key].path||[];
-    jump=!!reach[key].jump;
-  }else{
-    path=[]; // その場 or 経路不能
-  }
+  if(reach[key]){ path=reach[key].path||[]; jump=!!reach[key].jump; }
+  else{ path=[]; }
   let ability=best.ability;
-  // 探索が能力をモデル化していない駒は、移動後の局面でヒューリスティックに能力を補完
   if(!ability && !SS_ABILITY_MODELED.has(p.type)){
     ability=heuristicAbilityFor(p, best.destR, best.destC);
   }
   return {plan:{pieceId:best.pieceId, path, jump, ability, attack:best.attack, score:0}, resign:res.resign};
+}
+function deepPlan(){
+  return deepPlanFromRes(ssBestMove(aiDepth));
+}
+function deepPlanAsync(onDone){
+  ssBestMoveAsync(aiDepth, res=>onDone(deepPlanFromRes(res)));
 }
 /* 指定駒が dest に移動した「と仮定して」最も有効な能力を1つ選ぶ（簡易） */
 /* 魔女の入替プラン：味方同士 or 敵同士を入れ替えて最も得をする組を選ぶ */
@@ -2063,6 +2063,40 @@ function ssBestAttack(st,side){
 }
 
 /* 静的評価（E視点：高いほどEに有利） */
+/* 後手からでも殴り勝てる（防御側でも強い）駒 */
+const SS_COUNTER_STRONG=new Set(["kenshi","senshi","kyuketsuki","fushicho"]);
+/* トラップ／不可視攻撃を仕掛けうる駒（居た場所の周囲が危険） */
+const SS_TRAPPER=new Set(["wanashi","bakudan","ninja","esper"]);
+
+/* プレイヤーの脅威マップ：各マスへ「次のプレイヤー手番で入りうる最大被ダメージ」を算出。
+   移動→通常攻撃、遠距離、軍師/巫女による追加行動・射程延長も概算で加味する。 */
+function ssPlayerThreat(st){
+  if(st._danger)return st._danger;
+  const danger={}; // "r,c" -> 予想被ダメージ
+  const bump=(r,c,d)=>{const k=r+","+c;if(!danger[k]||danger[k]<d)danger[k]=d;};
+  const pP=st.ps.filter(p=>p.o==="P");
+  const hasMiko=pP.some(p=>p.t==="miko");     // 巫女：味方+1行動力
+  const extraMove=(hasMiko?1:0);
+  for(const p of pP){
+    const mover={...p, maxAp:p.maxAp+extraMove};
+    const reach=ssReach(st,mover);
+    reach.push({r:p.r,c:p.c,cost:0,apLeft:mover.maxAp}); // その場も含む
+    for(const d of reach){
+      const from={...p,r:d.r,c:d.c};
+      if(!SS.noNormal.has(p.t)){
+        for(const [ar,ac] of ssNormalCells(from)){
+          bump(ar,ac, ssAtk(from,"melee"));
+        }
+      }
+      if(SS.ranged.has(p.t)&&d.apLeft>=1){
+        for(const [ar,ac] of ssRangedCells(from,d.r,d.c)) bump(ar,ac,1);
+      }
+    }
+  }
+  st._danger=danger;
+  return danger;
+}
+
 function ssEval(st){
   if(st.kE>=2)return 1e7;
   if(st.kP>=2)return -1e7;
@@ -2071,31 +2105,90 @@ function ssEval(st){
   // 駒の存在＋HP総量（E加点・P減点）
   for(const p of eP)v+=120+p.hp*80;
   for(const p of pP)v-=120+p.hp*80;
-  // 攻め圧：相手への最短マンハッタン距離が近い駒ほど主導権
   const dist=(a,arr)=>{let m=99;for(const b of arr)m=Math.min(m,Math.abs(a.r-b.r)+Math.abs(a.c-b.c));return m;};
-  for(const p of eP){ if(pP.length)v-=dist(p,pP)*10; }
+
+  // === プレイヤーの脅威マップ：危険マスに居るE駒を強く割り引く ===
+  const danger=ssPlayerThreat(st);
+  for(const p of eP){
+    const dmg=danger[p.r+","+p.c]||0;
+    if(dmg>0){
+      // 被弾の見込みを減点。撃破されうる（HP<=dmg）なら特に重く
+      let pen=dmg*70;
+      if(p.hp-dmg<=0){
+        pen+=340; // 次手番で取られる位置
+        // 後手からでも殴り勝てる駒は、あえて踏み込む価値があるので緩和
+        if(SS_COUNTER_STRONG.has(p.t))pen-=120;
+      }
+      v-=pen;
+    }
+  }
+
+  // === 攻め圧＆初手優位：相手に隣接して先に殴れる位置は加点 ===
+  for(const p of eP){
+    if(pP.length){
+      const dmin=dist(p,pP);
+      v-=dmin*10;
+      // 通常攻撃を先に当てられる間合い（隣接）で、返り討ちに遭わない駒は加点
+      if(!SS.noNormal.has(p.t)&&dmin===1){
+        const dgot=danger[p.r+","+p.c]||0;
+        if(p.hp-dgot>0)v+=45; // 先制して生き残れる好位置
+      }
+    }
+  }
   for(const p of pP){ if(eP.length)v+=dist(p,eP)*6; }
-  // 瀕死の相手は仕留めやすい→僅かに加点
+
+  // 瀕死の相手は仕留めやすい→加点／自軍の瀕死は減点
   for(const p of pP)if(p.hp<=1)v+=60;
   for(const p of eP)if(p.hp<=1)v-=60;
-  // --- プレイヤーの術士／悪霊の妨害リスクを考慮 ---
-  // 術士が生存していれば、AIの主力（行動力2や高HP前衛）が次手番に減速される恐れ→過度な突出を割り引く
+
+  // === 相性：後手でも殴り勝てるプレイヤー駒の隣に、脆いE駒を置かない ===
+  for(const cs of pP.filter(x=>SS_COUNTER_STRONG.has(x.t))){
+    for(const e of eP){
+      if(Math.abs(e.r-cs.r)+Math.abs(e.c-cs.c)===1){
+        // 相手の反撃想定ダメージ
+        const back=ssAtk({...cs,heroBoost:cs.heroBoost},"melee");
+        if(e.hp-back<=0)v-=90; // 迂闊に隣接すると返り討ち
+      }
+    }
+  }
+
+  // === トラップ予測：罠師/爆弾魔/忍者/超能力者の周囲マスに居るE駒を軽く割り引く ===
+  for(const tr of pP.filter(x=>SS_TRAPPER.has(x.t))){
+    for(const e of eP){
+      const man=Math.abs(e.r-tr.r)+Math.abs(e.c-tr.c);
+      if(man<=2)v-=(3-man)*6; // 近いほど罠・爆弾・忍者透明の危険
+    }
+  }
+
+  // === プレイヤーの妨害駒（術士・悪霊・呪詛師）への警戒 ===
   const pJutsu=pP.some(p=>p.t==="jutsushi");
   const pAkuryo=pP.some(p=>p.t==="akuryo");
+  const pJuso=pP.some(p=>p.t==="jusoshi");
   if(pJutsu){
     for(const p of eP){
-      // 行動力2の駒や、相手陣に踏み込んだ駒ほど減速の影響が大きい
       const exposure=(p.maxAp>=2?1.4:1.0)*Math.max(0,(4-dist(p,pP)));
-      v-=exposure*9;
+      v-=exposure*9; // 減速されると痛い突出を抑制
     }
   }
   if(pAkuryo){
     for(const p of eP){
-      // 通常攻撃役（近接アタッカー）が封じられると痛い→相手に密着しすぎる前衛を割り引く
       if(!SS.noNormal.has(p.t)){
         const exposure=Math.max(0,(3-dist(p,pP)));
-        v-=exposure*8;
+        v-=exposure*8; // 攻撃封じ対策：密着しすぎない
       }
+    }
+  }
+  if(pJuso){
+    // 呪詛師の全体-0.5は瀕死のE駒に致命的。瀕死駒が多いほど警戒
+    let frail=0;for(const p of eP)if(p.hp<=1)frail++;
+    v-=frail*35;
+  }
+
+  // === 軍師・巫女：相手の手数・機動が増える前提でE前衛の突出をやや抑制 ===
+  if(pP.some(p=>p.t==="gunshi"||p.t==="miko")){
+    for(const p of eP){
+      const exposure=Math.max(0,(3-dist(p,pP)));
+      v-=exposure*6;
     }
   }
   return v;
@@ -2142,11 +2235,10 @@ function ssSearch(st,depth,alpha,beta){
   }
 }
 /* 最善のE手番を選ぶ。反復深化で目標プライまで、時間予算内で深掘り */
-function ssBestMove(maxDepth){
+function ssBestPrepare(){
   const root=ssFromGame("E");
   const side="E";
   const mine=root.ps.filter(p=>p.o===side);
-  // ルート手の列挙（実行可能プランを保持）
   const rootMoves=[];
   for(const p of mine){
     const dests=ssReach(root,p);
@@ -2164,9 +2256,7 @@ function ssBestMove(maxDepth){
       }
     }
   }
-  if(rootMoves.length===0)return {resign:false, plan:null, allLose:false};
-
-  // 各ルート手を適用した「子state」と実行用メタを事前生成
+  if(rootMoves.length===0)return null;
   const applied=rootMoves.map(mv=>{
     const ns=ssClone(root);
     const np=ns.ps.find(x=>x.id===mv.pieceId);
@@ -2189,64 +2279,90 @@ function ssBestMove(maxDepth){
     ssRemoveDead(ns);
     ns.side="P";
     const jump=(np.t==="kiba"&&mv.cost===2&&(Math.abs(mv.dr-origin.r)+Math.abs(mv.dc-origin.c))>1);
-    // 移動・攻撃・能力のいずれかを伴う「実質的な行動」かどうか
     const moved=(mv.dr!==origin.r||mv.dc!==origin.c);
     const acts=moved||!!mv.ability||!!atk;
     return {state:ns, acts, plan:{pieceId:mv.pieceId,destR:mv.dr,destC:mv.dc,cost:mv.cost,jump,ability:mv.ability,attack:atk}};
   });
-
-  // --- 即時フォールバック：浅い静的評価で必ず「行動を伴う」最善手を確保 ---
-  // （深い探索が時間切れでも、何もしない手には絶対に落ちないようにする）
+  // 浅い評価の即時フォールバック
   let fbBest=-Infinity, fbPlan=null;
-  for(const a of applied){
-    if(!a.acts)continue; // 「何もしない」候補は除外
-    const v=ssEval(a.state)+Math.random()*2;
-    if(v>fbBest){fbBest=v;fbPlan=a.plan;}
+  for(const a of applied){ if(!a.acts)continue; const v=ssEval(a.state)+Math.random()*2; if(v>fbBest){fbBest=v;fbPlan=a.plan;} }
+  if(!fbPlan){ for(const a of applied){const v=ssEval(a.state);if(v>fbBest){fbBest=v;fbPlan=a.plan;}} }
+  return {applied, fbPlan, fbBest};
+}
+/* 1段（1深さ）ぶんの探索を実行し、暫定最善手・順序・投了判定材料を更新 */
+function ssRunDepth(applied, depth, order, valById){
+  ssAbort=false; ssNodes=0;
+  let localBest=-Infinity, localPlan=null;
+  const scored=[];
+  let completedAny=false;
+  for(const idx of order){
+    const node=applied[idx];
+    const v=ssSearch(node.state, depth-1, -Infinity, Infinity);
+    if(ssAbort)break;
+    completedAny=true;
+    scored.push({idx,v});
+    valById[idx]=v;
+    const better = v>localBest+1e-9 || (Math.abs(v-localBest)<=1e-9 && node.acts);
+    if(localPlan===null || better){ if(node.acts || localPlan===null){ localBest=v; localPlan=node.plan; } }
   }
-  // 行動を伴う候補が皆無なら（理論上ほぼ無い）行動なしでも最善を取る
-  if(!fbPlan){
-    for(const a of applied){const v=ssEval(a.state);if(v>fbBest){fbBest=v;fbPlan=a.plan;}}
+  let newOrder=order;
+  if(completedAny){
+    scored.sort((a,b)=>b.v-a.v);
+    newOrder=scored.map(s=>s.idx).concat(order.filter(i=>!scored.find(s=>s.idx===i)));
   }
+  return {completedAny, localBest, localPlan, newOrder};
+}
 
-  ssDeadline=performance.now()+6500; // 最大約6.5秒の思考予算（上限7秒）
-  let bestPlan=fbPlan;        // ★初期値を「何もしない」ではなく浅い最善手に
-  let bestVal=fbBest;
+function ssBestMove(maxDepth){
+  const prep=ssBestPrepare();
+  if(!prep)return {resign:false, plan:null, allLose:false};
+  const {applied, fbPlan}=prep;
+  ssDeadline=performance.now()+6200;
+  let bestPlan=fbPlan;
   let order=applied.map((_,i)=>i);
-  const valById={};          // 各ルート手の最深評価値を記録（投了判定用）
-
+  const valById={};
   for(let depth=2; depth<=maxDepth; depth++){
-    ssAbort=false; ssNodes=0;
-    let localBest=-Infinity, localPlan=null;
-    const scored=[];
-    let completedAny=false;
-    for(const idx of order){
-      const node=applied[idx];
-      const v=ssSearch(node.state, depth-1, -Infinity, Infinity);
-      if(ssAbort){break;} // この手は読み切れていない → 記録しない
-      completedAny=true;
-      scored.push({idx,v});
-      valById[idx]=v;
-      // 「行動を伴う手」を優先採用（同評価なら行動ありを選ぶ）
-      const better = v>localBest+1e-9 || (Math.abs(v-localBest)<=1e-9 && node.acts);
-      if(localPlan===null || better){
-        if(node.acts || localPlan===null){ localBest=v; localPlan=node.plan; }
-      }
-    }
-    if(completedAny && localPlan){
-      bestPlan=localPlan; bestVal=localBest;
-      scored.sort((a,b)=>b.v-a.v);
-      order=scored.map(s=>s.idx).concat(order.filter(i=>!scored.find(s=>s.idx===i)));
-      if(localBest>=1e6)break; // 勝ち確定
+    const r=ssRunDepth(applied, depth, order, valById);
+    order=r.newOrder;
+    if(r.completedAny && r.localPlan){
+      bestPlan=r.localPlan;
+      if(r.localBest>=1e6)break;
     }
     if(performance.now()>ssDeadline)break;
   }
-
-  // --- 投了判定：読み切れた全候補が「敗北確定（-1e6以下）」なら勝率0% ---
   const evaluated=Object.values(valById);
   const allLose = evaluated.length>0 && evaluated.every(v=>v<=-1e6);
-
   return {resign:allLose, plan:bestPlan, allLose};
 }
+/* 非同期版：各深さの間で描画に譲る（スピナーを回し、UIをブロックしない） */
+function ssBestMoveAsync(maxDepth, onDone){
+  const prep=ssBestPrepare();
+  if(!prep){onDone({resign:false, plan:null, allLose:false});return;}
+  const {applied, fbPlan}=prep;
+  ssDeadline=performance.now()+6200;
+  let bestPlan=fbPlan;
+  let order=applied.map((_,i)=>i);
+  const valById={};
+  let depth=2;
+  const step=()=>{
+    if(depth>maxDepth || performance.now()>ssDeadline){ finish(); return; }
+    const r=ssRunDepth(applied, depth, order, valById);
+    order=r.newOrder;
+    if(r.completedAny && r.localPlan){
+      bestPlan=r.localPlan;
+      if(r.localBest>=1e6){ finish(); return; }
+    }
+    depth++;
+    setTimeout(step,0); // 描画に譲ってから次の深さへ
+  };
+  const finish=()=>{
+    const evaluated=Object.values(valById);
+    const allLose = evaluated.length>0 && evaluated.every(v=>v<=-1e6);
+    onDone({resign:allLose, plan:bestPlan, allLose});
+  };
+  setTimeout(step,0);
+}
+
 /* ベスト通常攻撃のプランを返す（state適用も行う） */
 function ssBestAttackPlan(st,side){
   let best=null,bs=-1;
