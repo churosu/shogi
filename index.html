@@ -251,7 +251,7 @@ function newGame(){
     aiTypes:aiPickComposition(),
   };
   UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
-  pid=1;
+  pid=1; aiMoveHistory=[];
   $("#log").innerHTML="";
   if(randomDeal){
     log("―― ランダム配布モード。両軍の駒が無作為に配られます ――","s");
@@ -596,7 +596,7 @@ function newNetGame(first,rnd,deal){
      setupCount:{P:0,E:0},slotsLeft:1,currentActor:null,attackUsed:false,
      respawnQueue:[],over:false,aiTypes:[]};
   UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
-  pid=1;
+  pid=1; aiMoveHistory=[];
   $("#log").innerHTML="";
   log(`―― オンライン対戦 開戦。先手は${first?"あなた":"相手"}です ――`,"s",true);
   if(rnd&&deal){
@@ -2235,6 +2235,32 @@ function ssSearch(st,depth,alpha,beta){
   }
 }
 /* 最善のE手番を選ぶ。反復深化で目標プライまで、時間予算内で深掘り */
+/* === 千日手（同一行動の反復）回避 === */
+let aiMoveHistory=[]; // 直近のAI手のシグネチャ（新しいものほど後ろ）
+const AI_HIST_MAX=12;
+function aiMoveSig(plan){
+  if(!plan)return "none";
+  const ab=plan.ability?plan.ability.kind:"-";
+  return plan.pieceId+":"+plan.destR+","+plan.destC+":"+ab;
+}
+function aiSigFromExec(plan){
+  // aiExecutePlan形式（path配列）からシグネチャを作る
+  if(!plan)return "none";
+  const dest=(plan.path&&plan.path.length)?plan.path[plan.path.length-1]:null;
+  const p=byId(plan.pieceId);
+  const dr=dest?dest[0]:(p?p.r:"?"), dc=dest?dest[1]:(p?p.c:"?");
+  const ab=plan.ability?plan.ability.kind:"-";
+  return plan.pieceId+":"+dr+","+dc+":"+ab;
+}
+function aiRecordMove(sig){
+  aiMoveHistory.push(sig);
+  if(aiMoveHistory.length>AI_HIST_MAX)aiMoveHistory.shift();
+}
+/* そのシグネチャが直近で何回出たか */
+function aiRepeatCount(sig){
+  let n=0;for(const s of aiMoveHistory)if(s===sig)n++;return n;
+}
+
 function ssBestPrepare(){
   const root=ssFromGame("E");
   const side="E";
@@ -2281,12 +2307,16 @@ function ssBestPrepare(){
     const jump=(np.t==="kiba"&&mv.cost===2&&(Math.abs(mv.dr-origin.r)+Math.abs(mv.dc-origin.c))>1);
     const moved=(mv.dr!==origin.r||mv.dc!==origin.c);
     const acts=moved||!!mv.ability||!!atk;
-    return {state:ns, acts, plan:{pieceId:mv.pieceId,destR:mv.dr,destC:mv.dc,cost:mv.cost,jump,ability:mv.ability,attack:atk}};
+    const plan={pieceId:mv.pieceId,destR:mv.dr,destC:mv.dc,cost:mv.cost,jump,ability:mv.ability,attack:atk};
+    // 千日手ペナルティ：同一行動が直近で3回以上出ていたら、その超過回数ぶん減点
+    const rep=aiRepeatCount(aiMoveSig(plan));
+    const repPenalty = rep>=2 ? (rep-1)*600 : 0; // 2回まではOK、3回目以降で強く嫌う
+    return {state:ns, acts, plan, repPenalty};
   });
-  // 浅い評価の即時フォールバック
+  // 浅い評価の即時フォールバック（千日手ペナルティ込み）
   let fbBest=-Infinity, fbPlan=null;
-  for(const a of applied){ if(!a.acts)continue; const v=ssEval(a.state)+Math.random()*2; if(v>fbBest){fbBest=v;fbPlan=a.plan;} }
-  if(!fbPlan){ for(const a of applied){const v=ssEval(a.state);if(v>fbBest){fbBest=v;fbPlan=a.plan;}} }
+  for(const a of applied){ if(!a.acts)continue; const v=ssEval(a.state)-a.repPenalty+Math.random()*2; if(v>fbBest){fbBest=v;fbPlan=a.plan;} }
+  if(!fbPlan){ for(const a of applied){const v=ssEval(a.state)-a.repPenalty;if(v>fbBest){fbBest=v;fbPlan=a.plan;}} }
   return {applied, fbPlan, fbBest};
 }
 /* 1段（1深さ）ぶんの探索を実行し、暫定最善手・順序・投了判定材料を更新 */
@@ -2297,9 +2327,11 @@ function ssRunDepth(applied, depth, order, valById){
   let completedAny=false;
   for(const idx of order){
     const node=applied[idx];
-    const v=ssSearch(node.state, depth-1, -Infinity, Infinity);
+    const raw=ssSearch(node.state, depth-1, -Infinity, Infinity);
     if(ssAbort)break;
     completedAny=true;
+    // 千日手ペナルティを反映した実効スコアで手を選ぶ（ただし勝ち確定は割り引かない）
+    const v = raw>=1e6 ? raw : raw-(node.repPenalty||0);
     scored.push({idx,v});
     valById[idx]=v;
     const better = v>localBest+1e-9 || (Math.abs(v-localBest)<=1e-9 && node.acts);
@@ -2513,6 +2545,12 @@ function aiMakePlan(){
       }
     }
   }
+  // 千日手ペナルティ：直近で同一行動を繰り返している候補を減点（2回まではOK）
+  for(const c of cands){
+    if(c.score>=300) continue; // 撃破級の高評価手は割り引かない
+    const rep=aiRepeatCount(aiSigFromExec(c));
+    if(rep>=2)c.score-=(rep-1)*200;
+  }
   cands.sort((a,b)=>b.score-a.score);
   if(cands.length===0)return null;
   // 行動必須ルール：移動も能力もない候補は、他に選択肢がない場合のみ許可
@@ -2525,6 +2563,7 @@ function aiMakePlan(){
 }
 
 function aiExecutePlan(plan){
+  aiRecordMove(aiSigFromExec(plan)); // 千日手検出用に手を記録
   const steps=[];
   if(plan){
     const p=byId(plan.pieceId);
