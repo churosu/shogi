@@ -1832,20 +1832,82 @@ function aiWeightedPick(exclude){
   return pool[0];
 }
 function aiPickComposition(){
-  // 遠距離を1枚は確保しつつ、残りは全24種から抽選
-  const ranged=Math.random()<0.5?"kyuhei":"sogeki";
-  const a=aiWeightedPick([ranged]);
-  const b=aiWeightedPick([ranged]); // 種類重複は許容（重なってもよい）
-  // 配置順をシャッフルして遠距離が必ず真ん中に来ないように
-  const arr=[a,ranged,b];
-  for(let i=arr.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]];}
-  return arr;
+  // 実際の駒種は配置時に盤面を見て決めるため、ここではプレースホルダのみ返す
+  return [null,null,null];
 }
 function aiPickRespawnType(){
   return aiWeightedPick([]);
 }
+/* 初手配置：今出ている駒（自分・相手）を考慮して、この手番で置く駒種を選ぶ */
+function aiChooseSetupType(){
+  const myPlaced=alive("E").map(p=>p.type);      // 自分が既に置いた駒
+  const foesPlaced=alive("P").map(p=>p.type);    // 相手が既に置いた駒
+  const idx=G.setupCount.E;                        // 何体目か（0,1,2）
+  const remaining=3-idx;                           // 残り配置数（この手番含む）
+  const hasRanged=myPlaced.some(t=>t==="kyuhei"||t==="sogeki");
+
+  const CANDS=["kenshi","senshi","kiba","souhei","kyuhei","sogeki","kyuketsuki",
+               "tatehei","jutsushi","akuryo","esper","fushicho","yusha","wanashi",
+               "jusoshi","majo","bakudan","miko","gunshi","kusushi","chokyo",
+               "boken","seishoku","ninja"];
+  let best=null,bestScore=-1e9;
+  for(const type of CANDS){
+    let s=(AI_WEIGHTS[type]||2)*3;               // 基本の強さ
+    s+=Math.random()*10;
+
+    // --- 遠距離の確保：最後の1枠までに遠距離が無ければ強く優先 ---
+    const isRanged=(type==="kyuhei"||type==="sogeki");
+    if(!hasRanged){
+      if(isRanged) s+= (remaining===1?260:120); // 最後の枠なら必ず遠距離を確保
+    }else{
+      if(isRanged) s-=40; // 既に遠距離持ち → もう1枚は控えめ
+    }
+
+    // --- 同種の重複を避ける（多様性）---
+    const dup=myPlaced.filter(t=>t===type).length;
+    s-=dup*70;
+
+    // --- 相手の駒への相性（カウンター）---
+    for(const ft of foesPlaced){
+      // 相手が後手でも殴り勝てる近接（剣士・戦士・吸血鬼）を置いてきたら、
+      // 遠距離・盾・妨害で対抗する駒を高評価
+      if(["kenshi","senshi","kyuketsuki","fushicho"].includes(ft)){
+        if(isRanged)s+=45;                    // 遠距離で触らず削る
+        if(type==="tatehei")s+=35;            // 盾で受ける
+        if(type==="jutsushi"||type==="akuryo")s+=30; // 減速・攻撃封じ
+        if(type==="esper")s+=25;              // 位置をずらす
+      }
+      // 相手が遠距離（弓・狙撃）を置いたら、機動力・盾・妨害で寄せる
+      if(ft==="kyuhei"||ft==="sogeki"){
+        if(type==="kiba"||type==="ninja"||type==="boken")s+=35; // 素早く距離を詰める
+        if(type==="tatehei")s+=25;
+        if(type==="akuryo"||type==="esper")s+=25;
+      }
+      // 相手が超能力者・魔女など盤面操作系なら、粘る駒や妨害で対応
+      if(ft==="esper"||ft==="majo"){
+        if(type==="fushicho")s+=20;
+        if(type==="jutsushi")s+=18;
+      }
+      // 相手が勇者を置いたら（将来の覚醒に備え）粘り・妨害を少し評価
+      if(ft==="yusha"){
+        if(type==="fushicho"||type==="tatehei")s+=18;
+      }
+    }
+
+    // --- 自軍の編成シナジー ---
+    // 前衛アタッカーが居るなら、支援・妨害役を足すとバランスが良い
+    const myAttackers=myPlaced.filter(t=>["kenshi","senshi","kiba","souhei","kyuketsuki"].includes(t)).length;
+    if(myAttackers>=1 && ["jutsushi","akuryo","esper","kusushi","miko","gunshi"].includes(type))s+=20;
+    // まだアタッカーが居ないなら近接/遠距離アタッカーを優先
+    if(myAttackers===0 && ["kenshi","senshi","kiba","souhei","kyuketsuki","kyuhei","sogeki"].includes(type))s+=25;
+
+    if(s>bestScore){bestScore=s;best=type;}
+  }
+  return best||aiWeightedPick([]);
+}
 function aiPlaceSetup(){
-  const type=G.aiTypes[G.setupCount.E];
+  // 盤面を見てこの手番の駒種を決定
+  const type=aiChooseSetupType();
   const prefer=[1,4,2,3,0,5];
   let col=null;
   for(const c of prefer){
@@ -1855,6 +1917,12 @@ function aiPlaceSetup(){
   }
   if(col===null){for(let c=0;c<6;c++)if(!at(0,c)){col=c;break;}}
   const p=makePiece(type,"E",0,col);
+  if(type==="esper")p.flags.esperMode=aiEsperModeFor(0,col,alive("P").filter(f=>!f.flags.invisible));
+  if(type==="yusha" && alive("P").length){
+    const t=alive("P").slice().sort((a,b)=>(b.maxAp-a.maxAp)||(b.hp-a.hp))[0];
+    p.flags.maouId=t.id;
+    log("敵の勇者が密かに魔王を指定した…","e",true);
+  }
   G.pieces.push(p);
   G.setupCount.E++;
   log(`敵軍：${PIECES[type].name}を配置`,"e");
