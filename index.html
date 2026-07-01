@@ -202,22 +202,22 @@ const PIECES = {
   kiba:      {name:"騎馬",  k:"馬", ap:2, desc:"斜め移動可。行動力2を消費して駒を1つ飛び越えられる"},
   senshi:    {name:"戦士",  k:"戦", ap:1, desc:"体力2以下で与ダメ+1、体力1以下で与ダメ+2"},
   jutsushi:  {name:"術士",  k:"術", ap:1, desc:"行動力0：敵1体の次ターンの行動力-1（毎ターン1回）。移動と併用可"},
-  wanashi:   {name:"罠師",  k:"罠", ap:1, desc:"行動力1：周囲8マスに罠を設置（最大2）。罠＝1ダメ＋行動力-1。自分のみ視認可"},
+  wanashi:   {name:"罠師",  k:"罠", ap:1, desc:"行動力1：周囲8マスに罠を設置（最大2、超過時は最古を撤去）。罠＝1ダメ＋次ターン行動力-1。自分のみ視認可。倒れると自分の罠は全消滅"},
   ninja:     {name:"忍者",  k:"忍", ap:2, desc:"行動力1：相手手番終了まで透明化。透明マスに来た敵に3ダメ。透明中は斜め移動可・爆発以外の攻撃無効・通常攻撃不可"},
   kusushi:   {name:"薬師",  k:"薬", ap:1, desc:"行動力1：隣接駒のHPを±1（味方+1／敵-1。ゲーム中1回のみ）"},
   chokyo:    {name:"調教師",k:"調", ap:1, noNormal:true, desc:"行動力1：HP1の獣を隣に召喚（召喚したターンから操作可）。獣死亡で自分HP-0.5。通常攻撃不可"},
   gunshi:    {name:"軍師",  k:"軍", ap:1, desc:"行動力1＋HP0.5：このターン、駒を2体行動させられる"},
   souhei:    {name:"槍兵",  k:"槍", ap:1, desc:"通常攻撃の範囲が「斜め4マス＋正面1マス」になる"},
   fushicho:  {name:"不死鳥",k:"鳳", ap:1, desc:"死亡時、1度だけ失点を与えずHP0.5でその場に復活"},
-  jusoshi:   {name:"呪詛師",k:"呪", ap:1, desc:"HP1.5を消費：敵全体のHP-0.5（行動力消費なし）"},
-  miko:      {name:"巫女",  k:"巫", ap:1, desc:"行動力1＋HP0.5：味方1体の行動力+1。さらにその駒も行動できる"},
+  jusoshi:   {name:"呪詛師",k:"呪", ap:1, desc:"HP1.5を消費：敵全体のHP-0.5（行動力消費なし・毎ターン1回）。HP1.5でも使用可（自壊すれば相手の勝ち点）。使用後は移動か待機を選べる"},
+  miko:      {name:"巫女",  k:"巫", ap:1, noNormal:true, desc:"行動力1＋HP0.5：味方1体の行動力+1。さらにその駒も行動できる。通常攻撃不可"},
   esper:     {name:"超能力者",k:"超", ap:1, desc:"召喚時に縦横／斜めモードを選択。射程2マス内の駒（敵味方問わず）を1マス動かす（行動力1）"},
   boken:     {name:"冒険者",k:"冒", ap:2, desc:"左右の端を行き来できる"},
   kyuketsuki:{name:"吸血鬼",k:"吸", ap:1, desc:"通常攻撃でダメージを与えるたび、HPを0.5回復する"},
   sogeki:    {name:"狙撃手",k:"狙", ap:1, noNormal:true, desc:"行動力1：斜め3マスまでの遠距離攻撃。通常攻撃不可"},
   seishoku:  {name:"聖職者",k:"聖", ap:1, desc:"死亡時、味方全てに1ダメージ。1度だけ行動力1で味方全体のHP+0.5"},
   majo:      {name:"魔女",  k:"魔", ap:1, desc:"行動力1：味方同士、または敵同士の位置を入れ替える"},
-  bakudan:   {name:"爆弾魔",k:"爆", ap:1, noNormal:true, desc:"行動力1：隣接マスに爆弾設置。次の自分手番終了時に爆発し周囲8マスへ1ダメ。通常攻撃不可"},
+  bakudan:   {name:"爆弾魔",k:"爆", ap:1, desc:"行動力1：隣接マスに爆弾設置。次の自分手番終了時に爆発し爆心＋周囲8マスへ1ダメ。通常攻撃可"},
   yusha:     {name:"勇者",  k:"勇", ap:1, desc:"召喚時、敵1体を密かに「魔王」に指定。魔王が場を去ると近接攻撃3・HP1回復"},
   akuryo:    {name:"悪霊",  k:"霊", ap:1, desc:"行動力0：敵1体は次の手番、通常攻撃ができない（毎ターン1回）。移動と併用可"},
   kemono:    {name:"獣",    k:"獣", ap:1, beast:true, desc:"調教師の効果でのみ召喚される（HP1）"},
@@ -779,6 +779,12 @@ function killPiece(p,src,kind){
   p.dead=true;
   sfx("death");
   log(`◆ ${pieceLabel(p)}は倒れた！`,p.owner==="P"?"e":"p");
+  // 罠師が倒れたら、その罠師の罠を全て解除
+  if(p.type==="wanashi"){
+    const before=G.traps.length;
+    G.traps=G.traps.filter(t=>t.setter!==p.id);
+    if(G.traps.length<before)log("罠師の死により、仕掛けられていた罠が消えた","s");
+  }
   // 魔王チェック
   for(const h of G.pieces){
     if(!h.dead && h.type==="yusha" && h.flags.maouId===p.id && !h.flags.heroBoost){
@@ -1190,10 +1196,11 @@ function abilityButtons(p){
         p.ap=0;log("悪霊はその場で待機した","p");render();
       });break;}
     case "wanashi":{
-      const myTraps=G.traps.filter(t=>t.owner==="P").length;
+      const myTraps=G.traps.filter(t=>t.setter===p.id).length;
       const cells=ALL8.map(([dr,dc])=>[p.r+dr,p.c+dc])
         .filter(([r,c])=>inB(r,c)&&!at(r,c)&&!G.traps.some(t=>t.r===r&&t.c===c));
-      A(`罠設置（行1）残${2-myTraps}`,canAct&&p.ap>=1&&myTraps<2&&cells.length>0,()=>{
+      const label=myTraps<2?`罠設置（行1）残${2-myTraps}`:"罠設置（行1・最古の罠を撤去して設置）";
+      A(label,canAct&&p.ap>=1&&cells.length>0,()=>{
         UI.mode="ability";UI.ability={type:"trap",piece:p};
         UI.targets=new Set(cells.map(t=>t.join(",")));render();
       });break;}
@@ -1225,14 +1232,27 @@ function abilityButtons(p){
         log("軍師の采配！このターン、駒を2体行動させられる（HP-0.5）","p");
         sfx("pick");render();
       });break;
-    case "jusoshi":
-      A("呪詛：敵全体HP-0.5（HP1.5）",canAct&&p.hp>1.5,()=>{
+    case "jusoshi":{
+      A("呪詛：敵全体HP-0.5（HP1.5消費）",canAct&&!p.flags.usedFree&&p.hp>=1.5,()=>{
         if(!takeActionSlot(p))return;
-        p.hp=r2(p.hp-1.5);
+        p.flags.usedFree=true;
         log("呪詛師が血の代償で呪いを放った！（自HP-1.5）","p");
         for(const t of alive("E"))dealDamage(t,0.5,null,"curse");
-        processRespawns(()=>render());
-      });break;
+        // 血の代償で自らのHPを削る。0以下なら相手の勝ち点として散る
+        p.hp=r2(p.hp-1.5);
+        if(p.hp<=0 && !p.dead){ killPiece(p,null,"curse"); G.currentActor=null; UI.sel=null; }
+        // 再召喚が終わったら行動フェーズに戻す（自壊時に召喚フェーズから抜けられるように）
+        processRespawns(()=>{
+          if(!G.over && G.turn==="P" && G.phase==="action"){
+            UI={mode:"action",sel:UI.sel,targets:new Set(),ability:null,extra:{}};
+          }
+          render();
+        });
+      });
+      A("待機（残り行動力を消費）",canAct&&p.ap>=1,()=>{
+        if(!takeActionSlot(p))return;
+        p.ap=0;log("呪詛師はその場で待機した","p");render();
+      });break;}
     case "miko":{
       const ts=alive("P").filter(t=>t.id!==p.id);
       A("神楽：味方+1行動（行1＋HP0.5）",canAct&&p.ap>=1&&p.hp>0.5&&ts.length>0,()=>{
@@ -1312,7 +1332,14 @@ function resolveAbilityClick(r,c){
     case "trap":{
       if(!takeActionSlot(p))break;
       p.ap--;
-      G.traps.push({owner:"P",r,c});
+      // この罠師の罠が上限(2)に達していたら、最古の1つを撤去
+      const mine=G.traps.filter(t=>t.setter===p.id);
+      if(mine.length>=2){
+        const oldest=mine[0];
+        const idx=G.traps.indexOf(oldest);
+        if(idx>=0){G.traps.splice(idx,1);log("最も古い罠を撤去して設置し直した","p",true);}
+      }
+      G.traps.push({owner:"P",r,c,setter:p.id});
       log("罠を仕掛けた（敵には見えない）","p",true);sfx("pick");
       break;}
     case "medicine":{
@@ -1810,6 +1837,19 @@ function heuristicAbilityFor(p,dr,dc){
       if(en)return {kind:"poison",targetId:en.id};
       return null;
     }
+    case "wanashi":{ // 罠師：移動後の周囲8マスで、敵に最も近い空きマスに罠を設置
+      const mine=G.traps.filter(t=>t.setter===p.id).length;
+      const cells=ALL8.map(([a,b])=>[dr+a,dc+b])
+        .filter(([r,c])=>inB(r,c)&&!at(r,c)&&!G.traps.some(t=>t.r===r&&t.c===c));
+      if(!cells.length||!foes.length)return null;
+      const distF=(r,c)=>{let m=99;for(const f of foes)m=Math.min(m,Math.abs(f.r-r)+Math.abs(f.c-c));return m;};
+      cells.sort((A,B)=>distF(A[0],A[1])-distF(B[0],B[1]));
+      const best=cells[0];
+      if(distF(best[0],best[1])<=2 || mine<2){
+        return {kind:"trap",tr:best[0],tc:best[1]};
+      }
+      return null;
+    }
     case "majo":{ // 魔女：リスク回避 or 有利対面構築のための入替
       return witchPlan(p);
     }
@@ -1829,7 +1869,7 @@ function heuristicAbilityFor(p,dr,dc){
    ========================================================= */
 const SS={ // 静的データ（全24種対応）
   // 通常攻撃を持たない駒
-  noNormal:new Set(["kyuhei","sogeki","wanashi","chokyo","bakudan"]),
+  noNormal:new Set(["kyuhei","sogeki","wanashi","chokyo","miko"]),
   // 遠距離攻撃を「能力」として撃てる駒（探索で展開）
   ranged:new Set(["kyuhei","sogeki"]),
   // 行動力2の駒（騎馬・忍者・冒険者）
@@ -1943,17 +1983,18 @@ function ssGenerate(st){
           }
         }
       }
-      // 呪詛師：その場（cost0）で全体-0.5（HP>1.5）
-      if(p.t==="jusoshi"&&d.cost===0&&np.hp>1.5){
+      // 呪詛師：その場（cost0）で全体-0.5（HP>=1.5、自壊すれば相手の勝ち点）
+      if(p.t==="jusoshi"&&d.cost===0&&np.hp>=1.5){
         const ns3=ssClone(st);
         const a3=ns3.ps.find(x=>x.id===p.id);
-        a3.hp=r2(a3.hp-1.5);
         for(const t of ns3.ps.filter(x=>x.o!==side)){
           let killed=t.hp-0.5<=0;
           if(killed&&t.t==="fushicho"&&!t.phoenix){t.phoenix=true;t.hp=0.5;killed=false;}
           else t.hp=r2(t.hp-0.5);
           if(killed){t.dead=true;if(t.o==="P")ns3.kE++;else ns3.kP++;}
         }
+        a3.hp=r2(a3.hp-1.5);
+        if(a3.hp<=0){a3.dead=true;if(a3.o==="P")ns3.kE++;else ns3.kP++;}
         pushState(ns3);
       }
     }
@@ -2118,7 +2159,7 @@ function ssBestMove(maxDepth){
           if(t&&t.o!==side&&!t.block)rootMoves.push({pieceId:p.id,dr:d.r,dc:d.c,cost:d.cost,apLeft:d.apLeft,ability:{kind:"ranged",tr:rr,tc:cc}});
         }
       }
-      if(p.t==="jusoshi"&&d.cost===0&&p.hp>1.5){
+      if(p.t==="jusoshi"&&d.cost===0&&p.hp>=1.5){
         rootMoves.push({pieceId:p.id,dr:d.r,dc:d.c,cost:0,apLeft:d.apLeft,ability:{kind:"curse"}});
       }
     }
@@ -2135,13 +2176,14 @@ function ssBestMove(maxDepth){
       const t=ns.ps.find(x=>x.r===mv.ability.tr&&x.c===mv.ability.tc&&x.o!=="E");
       if(t)ssDealDamage(ns,np,t,"ranged");
     }else if(mv.ability&&mv.ability.kind==="curse"){
-      np.hp=r2(np.hp-1.5);
       for(const t of ns.ps.filter(x=>x.o!=="E")){
         let killed=t.hp-0.5<=0;
         if(killed&&t.t==="fushicho"&&!t.phoenix){t.phoenix=true;t.hp=0.5;killed=false;}
         else t.hp=r2(t.hp-0.5);
         if(killed){t.dead=true;ns.kP++;}
       }
+      np.hp=r2(np.hp-1.5);
+      if(np.hp<=0){np.dead=true;ns.kP++;}
     }
     const atk=ssBestAttackPlan(ns,"E");
     ssRemoveDead(ns);
@@ -2350,7 +2392,7 @@ function aiMakePlan(){
           if(t)tryC({kind:"ranged",targetId:t.id});
         }
       }
-      if(p.type==="jusoshi"&&p.hp>1.5&&info.cost===0){
+      if(p.type==="jusoshi"&&p.hp>=1.5&&info.cost===0){
         tryC({kind:"curse"});
       }
     }
@@ -2401,10 +2443,11 @@ function aiExecutePlan(plan){
           });
         }else if(plan.ability.kind==="curse"){
           steps.push(()=>{
-            if(p.dead||p.hp<=1.5)return;
-            p.hp=r2(p.hp-1.5);
+            if(p.dead||p.hp<1.5)return;
             log("敵の呪詛師が呪いを放った！（敵全体HP-0.5）","e");
             for(const t of alive("P"))dealDamage(t,0.5,null,"curse");
+            p.hp=r2(p.hp-1.5);
+            if(p.hp<=0 && !p.dead) killPiece(p,null,"curse");
           });
         }else if(plan.ability.kind==="slow"){
           steps.push(()=>{
@@ -2450,6 +2493,17 @@ function aiExecutePlan(plan){
             p.ap--;p.flags.healUsed=true;
             dealDamage(t,1,p,"poison");
             log(`敵の薬師が${pieceLabel(t)}に毒を盛った`,"e");sfx("hit");
+          });
+        }else if(plan.ability.kind==="trap"){
+          steps.push(()=>{
+            if(p.dead||p.ap<1)return;
+            const {tr,tc}=plan.ability;
+            if(!inB(tr,tc)||at(tr,tc)||G.traps.some(t=>t.r===tr&&t.c===tc))return;
+            p.ap--;
+            const mine=G.traps.filter(t=>t.setter===p.id);
+            if(mine.length>=2){const idx=G.traps.indexOf(mine[0]);if(idx>=0)G.traps.splice(idx,1);}
+            G.traps.push({owner:"E",r:tr,c:tc,setter:p.id});
+            log("敵の罠師が罠を仕掛けた","e");sfx("pick");
           });
         }
       }
