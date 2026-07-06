@@ -241,7 +241,7 @@ const PIECES = {
   wanashi:   {name:"罠師",  k:"罠", ap:1, desc:"行動力1：周囲8マスに罠を設置（最大2、超過時は最古を撤去）。罠＝1ダメ＋次ターン行動力-1。自分のみ視認可。倒れると自分の罠は全消滅"},
   ninja:     {name:"忍者",  k:"忍", ap:2, desc:"行動力1：相手手番終了まで透明化。透明マスに来た敵に3ダメ。透明中は斜め移動可・爆発以外の攻撃無効・通常攻撃不可"},
   kusushi:   {name:"薬師",  k:"薬", ap:1, desc:"行動力1：隣接駒のHPを±1（味方+1／敵-1。ゲーム中1回のみ）"},
-  chokyo:    {name:"調教師",k:"調", ap:1, noNormal:true, desc:"行動力1：HP1の獣を隣に召喚（召喚したターンから操作可）。獣死亡で自分HP-0.5。通常攻撃不可"},
+  chokyo:    {name:"調教師",k:"調", ap:1, desc:"行動力1：HP1の獣を隣に召喚（召喚したターンから操作可）。獣死亡で自分HP-0.5。調教師が倒れると獣も消滅"},
   gunshi:    {name:"軍師",  k:"軍", ap:1, desc:"行動力1＋HP0.5：このターン、駒を2体行動させられる"},
   souhei:    {name:"槍兵",  k:"槍", ap:1, desc:"通常攻撃の範囲が「斜め4マス＋正面1マス」になる"},
   fushicho:  {name:"不死鳥",k:"鳳", ap:1, desc:"死亡時、1度だけ失点を与えずHP0.5でその場に復活"},
@@ -943,6 +943,16 @@ function killPiece(p,src,kind){
     G.traps=G.traps.filter(t=>t.setter!==p.id);
     if(G.traps.length<before)log("罠師の死により、仕掛けられていた罠が消えた","s");
   }
+  // 調教師が倒れたら、その調教師が召喚した獣も消滅
+  if(p.type==="chokyo"){
+    for(const beast of G.pieces){
+      if(!beast.dead && beast.type==="kemono" && beast.flags.beastOf===p.id){
+        beast.dead=true;
+        spawnShatterAt(beast.r,beast.c,beast.owner);
+        log("調教師の死により、獣も消え去った","s");
+      }
+    }
+  }
   // 魔王チェック
   for(const h of G.pieces){
     if(!h.dead && h.type==="yusha" && h.flags.maouId===p.id && !h.flags.heroBoost){
@@ -1245,9 +1255,11 @@ function enterSquare(p,nr,nc){
   return "ok";
 }
 function tryStep(p,nr,nc){
-  p.ap--;
+  // 冒険者の左右端ワープ（列0↔5をまたぐ横移動）は行動力を消費しない
+  const isWrap = p.type==="boken" && nr===p.r && Math.abs(nc-p.c)===5;
+  if(!isWrap)p.ap--;
   const res=enterSquare(p,nr,nc);
-  if(res==="ok")sfx("move");
+  if(res==="ok")sfx(isWrap?"teleport":"move");
   return res;
 }
 
@@ -2153,7 +2165,7 @@ function witchPlan(witch){
   }
   return best;
 }
-const SS_ATTACKER=new Set(["kenshi","senshi","kiba","souhei","kyuketsuki","yusha","ninja"]);
+const SS_ATTACKER=new Set(["kenshi","senshi","kiba","souhei","kyuketsuki","yusha","ninja","fushicho","kusushi"]);
 
 function heuristicAbilityFor(p,dr,dc){
   const foes=alive("P").filter(f=>!f.flags.invisible);
@@ -2217,7 +2229,7 @@ function heuristicAbilityFor(p,dr,dc){
    ========================================================= */
 const SS={ // 静的データ（全24種対応）
   // 通常攻撃を持たない駒
-  noNormal:new Set(["kyuhei","sogeki","wanashi","chokyo","miko"]),
+  noNormal:new Set(["kyuhei","sogeki","wanashi","miko"]),
   // 遠距離攻撃を「能力」として撃てる駒（探索で展開）
   ranged:new Set(["kyuhei","sogeki"]),
   // 行動力2の駒（騎馬・忍者・冒険者）
@@ -2228,7 +2240,7 @@ function ssClone(st){
   return {
     side:st.side, kP:st.kP, kE:st.kE,
     ps:st.ps.map(p=>({id:p.id,t:p.t,o:p.o,r:p.r,c:p.c,hp:p.hp,
-      block:p.block?{r:p.block.r,c:p.block.c}:null,phoenix:p.phoenix,maxAp:p.maxAp,heroBoost:p.heroBoost}))
+      block:p.block?{r:p.block.r,c:p.block.c}:null,phoenix:p.phoenix,maxAp:p.maxAp,heroBoost:p.heroBoost,invis:p.invis}))
   };
 }
 /* 現局面を探索用stateへ変換（プレイヤー手番開始時点を想定） */
@@ -2236,7 +2248,8 @@ function ssFromGame(side){
   const ps=G.pieces.filter(p=>!p.dead).map(p=>({
     id:p.id,t:p.type,o:p.owner,r:p.r,c:p.c,hp:p.hp,
     block:p.flags.block?{r:p.flags.block.r,c:p.flags.block.c}:null,
-    phoenix:!!p.flags.phoenix, maxAp:p.maxAp, heroBoost:!!p.flags.heroBoost
+    phoenix:!!p.flags.phoenix, maxAp:p.maxAp, heroBoost:!!p.flags.heroBoost,
+    invis:!!p.flags.invisible
   }));
   return {side, kP:G.kills.P, kE:G.kills.E, ps};
 }
@@ -2322,7 +2335,7 @@ function ssGenerate(st){
         const cells=ssRangedCells(np,d.r,d.c);
         for(const [rr,cc] of cells){
           const t=ssAt(ns,rr,cc);
-          if(t&&t.o!==side&&!(t.block)){
+          if(t&&t.o!==side&&!(t.block)&&ssTargetable(t,side)){
             const ns2=ssClone(st);
             const a2=ns2.ps.find(x=>x.id===p.id); a2.r=d.r;a2.c=d.c;
             const t2=ns2.ps.find(x=>x.r===rr&&x.c===cc&&x.o!==side);
@@ -2364,13 +2377,15 @@ function ssReach(st,p){
     for(const cur of frontier){
       for(const [dr,dc] of dirs){
         let nr=cur.r+dr,nc=cur.c+dc;
-        if(p.t==="boken")nc=(nc+6)%6; // 冒険者：左右ループ
+        let wrap=false;
+        if(p.t==="boken"&&nc!==((nc+6)%6)){ nc=(nc+6)%6; wrap=true; } // 冒険者：左右ループ（コスト0）
         if(!inB(nr,nc))continue;
         const k=nr+","+nc;
         if(res[k])continue;
         if(occupied(nr,nc))continue;
         if(!ssColorOk(st,p,nr,nc))continue;
-        res[k]={cost:res[cur.r+","+cur.c].cost+1};
+        const stepCost=wrap?0:1;
+        res[k]={cost:res[cur.r+","+cur.c].cost+stepCost};
         nf.push({r:nr,c:nc});
       }
     }
@@ -2394,12 +2409,15 @@ function ssReach(st,p){
   });
 }
 /* 手番側のベスト通常攻撃を1回だけ適用 */
+/* 攻撃側sideから見て、この駒を狙えるか（敵の透明忍者は狙えない） */
+function ssTargetable(t,bySide){ return !(t.invis && t.o!==bySide); }
 function ssBestAttack(st,side){
   let best=null,bs=-1;
   for(const a of st.ps.filter(x=>x.o===side&&!SS.noNormal.has(x.t))){
     for(const [r,c] of ssNormalCells(a)){
       const t=st.ps.find(x=>x.r===r&&x.c===c&&x.o!==side);
       if(!t)continue;
+      if(!ssTargetable(t,side))continue; // 透明忍者は攻撃不可
       if(t.block&&a.r===t.block.r&&a.c===t.block.c)continue;
       const d=ssAtk(a,"melee");
       const kills=t.hp-d<=0&&!(t.t==="fushicho"&&!t.phoenix);
@@ -2412,7 +2430,7 @@ function ssBestAttack(st,side){
 
 /* 静的評価（E視点：高いほどEに有利） */
 /* 後手からでも殴り勝てる（防御側でも強い）駒 */
-const SS_COUNTER_STRONG=new Set(["kenshi","senshi","kyuketsuki","fushicho"]);
+const SS_COUNTER_STRONG=new Set(["kenshi","senshi","kyuketsuki","fushicho","kusushi"]);
 /* トラップ／不可視攻撃を仕掛けうる駒（居た場所の周囲が危険） */
 const SS_TRAPPER=new Set(["wanashi","bakudan","ninja","esper"]);
 
@@ -2574,6 +2592,25 @@ function ssEval(st){
     v-=frail*35;
   }
 
+  // === 魔女：味方同士の入替で攻撃役を突然近距離へワープさせうる ===
+  // プレイヤーのアタッカーが「魔女経由で」E駒の隣へ来る可能性を警戒
+  if(pP.some(p=>p.t==="majo")){
+    const pAttackers=pP.filter(x=>["kenshi","senshi","kiba","souhei","kyuketsuki","ninja"].includes(x.t)||(x.t==="yusha"&&x.heroBoost));
+    // 魔女以外のプレイヤー駒の位置＝ワープ先候補。その隣にE駒がいると危険
+    for(const e of eP){
+      for(const anchor of pP){
+        if(anchor.t==="majo")continue;
+        // anchorの位置にアタッカーが入替で来たら隣接攻撃されうる
+        if(Math.abs(e.r-anchor.r)+Math.abs(e.c-anchor.c)===1 && pAttackers.length>0){
+          // そのアタッカーの想定ダメージで倒されるなら減点
+          let worst=0;for(const a of pAttackers)worst=Math.max(worst,ssAtk(a,"melee"));
+          if(e.hp-worst<=0)v-=45;
+          else v-=12;
+        }
+      }
+    }
+  }
+
   // === 軍師・巫女：相手の手数・機動が増える前提でE前衛の突出をやや抑制 ===
   if(pP.some(p=>p.t==="gunshi"||p.t==="miko")){
     for(const p of eP){
@@ -2664,7 +2701,7 @@ function ssBestPrepare(){
         const np={...p,r:d.r,c:d.c};
         for(const [rr,cc] of ssRangedCells(np,d.r,d.c)){
           const t=ssAt(root,rr,cc);
-          if(t&&t.o!==side&&!t.block)rootMoves.push({pieceId:p.id,dr:d.r,dc:d.c,cost:d.cost,apLeft:d.apLeft,ability:{kind:"ranged",tr:rr,tc:cc}});
+          if(t&&t.o!==side&&!t.block&&ssTargetable(t,side))rootMoves.push({pieceId:p.id,dr:d.r,dc:d.c,cost:d.cost,apLeft:d.apLeft,ability:{kind:"ranged",tr:rr,tc:cc}});
         }
       }
       if(p.t==="jusoshi"&&d.cost===0&&p.hp>=1.5){
@@ -2792,6 +2829,7 @@ function ssBestAttackPlan(st,side){
     for(const [r,c] of ssNormalCells(a)){
       const t=st.ps.find(x=>x.r===r&&x.c===c&&x.o!==side);
       if(!t)continue;
+      if(!ssTargetable(t,side))continue; // 透明忍者は攻撃不可
       if(t.block&&a.r===t.block.r&&a.c===t.block.c)continue;
       const d=ssAtk(a,"melee");
       const kills=t.hp-d<=0&&!(t.t==="fushicho"&&!t.phoenix);
