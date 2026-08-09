@@ -241,7 +241,7 @@ const PIECES = {
   wanashi:   {name:"罠師",  k:"罠", ap:1, desc:"行動力1：周囲8マスに罠を設置（最大2、超過時は最古を撤去）。罠＝1ダメ＋次ターン行動力-1。自分のみ視認可。倒れると自分の罠は全消滅"},
   ninja:     {name:"忍者",  k:"忍", ap:2, desc:"行動力1：相手手番終了まで透明化。透明マスに来た敵に3ダメ。透明中は斜め移動可・爆発以外の攻撃無効・通常攻撃不可"},
   kusushi:   {name:"薬師",  k:"薬", ap:1, desc:"行動力1：隣接駒のHPを±1（味方+1／敵-1。ゲーム中1回のみ）"},
-  chokyo:    {name:"調教師",k:"調", ap:1, desc:"行動力1：HP1の獣を隣に召喚（召喚したターンから操作可）。獣死亡で自分HP-0.5。調教師が倒れると獣も消滅"},
+  chokyo:    {name:"調教師",k:"調", ap:1, noNormal:true, desc:"行動力1：HP1の獣を隣に召喚（召喚したターンから操作可）。獣死亡で自分HP-0.5。調教師が倒れると獣も消滅。通常攻撃不可"},
   gunshi:    {name:"軍師",  k:"軍", ap:1, desc:"行動力1＋HP0.5：このターン、駒を2体行動させられる"},
   souhei:    {name:"槍兵",  k:"槍", ap:1, desc:"通常攻撃の範囲が「斜め4マス＋正面1マス」になる"},
   fushicho:  {name:"不死鳥",k:"鳳", ap:1, desc:"死亡時、1度だけ失点を与えずHP0.5でその場に復活"},
@@ -283,7 +283,7 @@ function newGame(){
     aiTypes:aiPickComposition(),
   };
   UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
-  pid=1; aiMoveHistory=[];
+  pid=1; aiMoveHistory=[]; aiPosHistory={};
   $("#log").innerHTML="";
   if(randomDeal){
     log("―― ランダム配布モード。両軍の駒が無作為に配られます ――","s");
@@ -749,7 +749,7 @@ function newNetGame(first,rnd,deal){
      setupCount:{P:0,E:0},slotsLeft:1,currentActor:null,attackUsed:false,
      respawnQueue:[],over:false,aiTypes:[]};
   UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
-  pid=1; aiMoveHistory=[];
+  pid=1; aiMoveHistory=[]; aiPosHistory={};
   $("#log").innerHTML="";
   log(`―― オンライン対戦 開戦。先手は${first?"あなた":"相手"}です ――`,"s",true);
   if(rnd&&deal){
@@ -1438,9 +1438,12 @@ function actorCanStillAct(){
   if(G.currentActor===null)return false;
   const p=byId(G.currentActor);
   if(!p||p.dead)return false;
+  // 行動力(AP)が残っていない駒は「必須の行動」は完了扱い
+  // （呪詛師・術士・悪霊などの行動力0で使える能力は任意なので強制しない）
+  if(p.ap<1)return false;
   if(stepOptions(p).length>0)return true;
   if(jumpOptions(p).length>0)return true;
-  return abilityButtons(p).some(b=>b.enabled);
+  return false;
 }
 /* 行動可能な駒が1体でも存在するか（手詰まり救済用） */
 function hasAnyPlayerAction(){
@@ -2167,6 +2170,37 @@ function witchPlan(witch){
 }
 const SS_ATTACKER=new Set(["kenshi","senshi","kiba","souhei","kyuketsuki","yusha","ninja","fushicho","kusushi"]);
 
+/* プレイヤー駒 f が次の手番に「移動→通常攻撃」で与えうる最大脅威を点数化。
+   AI駒を撃破できるなら特大、ダメージのみなら中程度。悪霊の標的選定に使う。 */
+function playerMeleeThreat(f){
+  if(PIECES[f.type].noNormal||f.flags.invisible)return 0;
+  const aiPieces=alive("E");
+  if(!aiPieces.length)return 0;
+  // f が到達しうるマス（行動力ぶん）＋その場
+  const spots=reachSquares(f,f.maxAp,true);
+  spots.push([f.r,f.c]);
+  let best=0;
+  for(const [mr,mc] of spots){
+    const ghost={...f,r:mr,c:mc};
+    // 移動先からの通常攻撃対象マス
+    let dirs;
+    if(f.type==="souhei")dirs=[...DIAG,[frontDr(f.owner),0]];
+    else dirs=ORTHO;
+    const dmg=atkDamage(ghost,"melee");
+    for(const [dr,dc] of dirs){
+      const tr=mr+dr, tc=mc+dc;
+      const victim=aiPieces.find(e=>e.r===tr&&e.c===tc);
+      if(!victim)continue;
+      // 盾の防御方向は軽減されるが簡易化
+      let score = dmg*45;                 // 与ダメージ
+      if(victim.hp-dmg<=0) score += 260;  // 撃破できる位置は極めて危険
+      score += (3-Math.max(0,victim.hp-dmg))*15; // 瀕死に追い込むほど加点
+      if(score>best)best=score;
+    }
+  }
+  return best;
+}
+
 function heuristicAbilityFor(p,dr,dc){
   const foes=alive("P").filter(f=>!f.flags.invisible);
   const allies=alive("E").filter(f=>f.id!==p.id);
@@ -2177,10 +2211,18 @@ function heuristicAbilityFor(p,dr,dc){
       const t=foes.slice().sort((a,b)=>b.maxAp-a.maxAp)[0];
       return {kind:"slow",targetId:t.id};
     }
-    case "akuryo":{ // 攻撃封じ（行0）：最もHPの高い前衛を狙う
+    case "akuryo":{ // 攻撃封じ（行0）：通常攻撃の脅威が突出して高い駒のみを封じる
       if(!foes.length)return null;
-      const t=foes.slice().sort((a,b)=>(b.hp-a.hp)||(Math.abs(b.r-dr)-Math.abs(a.r-dr)))[0];
-      return {kind:"bind",targetId:t.id};
+      // 各プレイヤー駒の「次の手番の通常攻撃脅威」を算出
+      let bestFoe=null, bestThreat=0;
+      for(const f of foes){
+        if(PIECES[f.type].noNormal)continue; // 通常攻撃しない駒は封じても無意味
+        const th=playerMeleeThreat(f);
+        if(th>bestThreat){bestThreat=th;bestFoe=f;}
+      }
+      // 脅威が高い（＝AI駒を撃破しうる／大ダメージ）場合のみ発動。低ければ移動を優先
+      if(bestFoe && bestThreat>=100) return {kind:"bind",targetId:bestFoe.id};
+      return null;
     }
     case "kusushi":{ // 薬師：①隣接敵を毒1で倒せるなら最優先 ②瀕死の味方を回復 ③隣接敵に毒
       const adjFoes=foes.filter(f=>Math.abs(f.r-dr)+Math.abs(f.c-dc)===1);
@@ -2229,7 +2271,7 @@ function heuristicAbilityFor(p,dr,dc){
    ========================================================= */
 const SS={ // 静的データ（全24種対応）
   // 通常攻撃を持たない駒
-  noNormal:new Set(["kyuhei","sogeki","wanashi","miko"]),
+  noNormal:new Set(["kyuhei","sogeki","wanashi","miko","chokyo"]),
   // 遠距離攻撃を「能力」として撃てる駒（探索で展開）
   ranged:new Set(["kyuhei","sogeki"]),
   // 行動力2の駒（騎馬・忍者・冒険者）
@@ -2687,6 +2729,19 @@ function aiRecordMove(sig){
 function aiRepeatCount(sig){
   let n=0;for(const s of aiMoveHistory)if(s===sig)n++;return n;
 }
+/* 駒ごとの直近の到達マス履歴（往復＝千日手の検出用） */
+let aiPosHistory={}; // pieceId -> ["r,c", ...]（新しいものほど後ろ）
+const AI_POS_MAX=6;
+function aiRecordPos(pieceId,r,c){
+  if(!aiPosHistory[pieceId])aiPosHistory[pieceId]=[];
+  aiPosHistory[pieceId].push(r+","+c);
+  if(aiPosHistory[pieceId].length>AI_POS_MAX)aiPosHistory[pieceId].shift();
+}
+/* その駒が「最近いたマス」に戻ろうとしている回数（往復のしつこさ） */
+function aiPosRevisitCount(pieceId,r,c){
+  const h=aiPosHistory[pieceId];if(!h)return 0;
+  let n=0;for(const s of h)if(s===r+","+c)n++;return n;
+}
 
 function ssBestPrepare(){
   const root=ssFromGame("E");
@@ -2737,7 +2792,12 @@ function ssBestPrepare(){
     const plan={pieceId:mv.pieceId,destR:mv.dr,destC:mv.dc,cost:mv.cost,jump,ability:mv.ability,attack:atk};
     // 千日手ペナルティ：同一行動が直近で3回以上出ていたら、その超過回数ぶん減点
     const rep=aiRepeatCount(aiMoveSig(plan));
-    const repPenalty = rep>=2 ? (rep-1)*600 : 0; // 2回まではOK、3回目以降で強く嫌う
+    let repPenalty = rep>=2 ? (rep-1)*600 : 0; // 2回まではOK、3回目以降で強く嫌う
+    // 往復検出：騎馬・冒険者・忍者などが「最近いたマス」へ戻る手を抑制
+    if(moved){
+      const revisit=aiPosRevisitCount(mv.pieceId, mv.dr, mv.dc);
+      if(revisit>=1)repPenalty += revisit*500; // 元の位置へ戻るほど強く嫌う
+    }
     return {state:ns, acts, plan, repPenalty};
   });
   // 浅い評価の即時フォールバック（千日手ペナルティ込み）
@@ -2991,7 +3051,16 @@ function aiMakePlan(){
 }
 
 function aiExecutePlan(plan){
+  // 安全ガード：弓兵・狙撃手は行動力1で「移動」か「遠距離攻撃」のどちらか一方のみ。
+  // 移動を伴うプランに遠距離攻撃が付いていたら、遠距離攻撃を無効化する。
+  if(plan && plan.ability && plan.ability.kind==="ranged" && plan.path && plan.path.length>0){
+    plan={...plan, ability:null};
+  }
   aiRecordMove(aiSigFromExec(plan)); // 千日手検出用に手を記録
+  if(plan&&plan.path&&plan.path.length){ // 往復検出用に到達マスを記録
+    const d=plan.path[plan.path.length-1];
+    aiRecordPos(plan.pieceId, d[0], d[1]);
+  }
   const steps=[];
   if(plan){
     const p=byId(plan.pieceId);
