@@ -328,8 +328,9 @@ const ALL8=[...ORTHO,...DIAG];
 /* ---------- state ---------- */
 let G=null;          // game state
 let UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
-let aiLevel="hard";
-let aiDepth=10; // 最強モードの探索プライ数
+let aiLevel="normal";
+let aiDepth=10; // ふつうモードの探索プライ数
+const AI_DEPTH_STRONG=15; // つよいモードの探索プライ数
 let randomDeal=false; // ランダム配布モード
 let soundOn=true;
 let pid=1;
@@ -341,7 +342,7 @@ function newGame(){
     phase:"setup", turn:"P",
     setupCount:{P:0,E:0},
     slotsLeft:1, currentActor:null, attackUsed:false,
-    respawnQueue:[], over:false,
+    respawnQueue:[], over:false, trapProb:[],
     aiTypes:aiPickComposition(),
   };
   UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
@@ -442,6 +443,93 @@ function log(msg,cls,priv){
 }
 function fmt(v){return Number.isInteger(v)?String(v):v.toFixed(1);}
 function pieceLabel(p){return (p.owner==="P"?"自軍":"敵軍")+PIECES[p.type].name;}
+/* 罠師が (pr,pc) で罠を設置したとき、周囲8マスのどこに罠がある「確率」を推定して保存する。
+   ・罠は罠師の周囲8マスのいずれかにある。
+   ・自軍(E)の近い駒への経路上（罠師から見て敵駒方向）のマスほど設置確率が高い。
+   ・さらにその隣接マスも次に高い。
+   ・罠は最大2個なので、確率上位2マスだけを保存する。 */
+function recordTrapProbability(setterId, pr, pc){
+  const cand=[];
+  for(const [dr,dc] of ALL8){
+    const r=pr+dr, c=pc+dc;
+    if(!inB(r,c))continue;
+    if(at(r,c))continue;                 // 駒がいるマスには罠を置けない
+    cand.push({r,c,w:1});                // 基本重み
+  }
+  if(!cand.length){ setTrapProbEntry(setterId, []); return; }
+  // 敵(E=AI)の駒のうち、この罠師に最も近い駒たちの方向を「経路方向」とみなす
+  const foes=alive("E");
+  for(const cell of cand){
+    // 罠師から各E駒への直線経路上にあるか（罠師→E駒 のベクトル方向に近いマスほど高確率）
+    for(const e of foes){
+      const vr=e.r-pr, vc=e.c-pc;              // 罠師→E駒 方向
+      const cr=cell.r-pr, cc=cell.c-pc;        // 罠師→候補マス 方向
+      const distE=Math.abs(vr)+Math.abs(vc);
+      if(distE===0)continue;
+      // 候補マスがE駒方向を向いているか（内積が正＝同じ側）
+      const dot=vr*cr+vc*cc;
+      if(dot>0){
+        // 経路上（E駒に近づく側）ほど加点。近いE駒ほど強く効かせる
+        const near=Math.max(1,4-distE);
+        cell.w += 3*near;
+        // ちょうど経路の直線上（外積が0に近い）ならさらに加点
+        const cross=Math.abs(vr*cc-vc*cr);
+        if(cross===0)cell.w += 3*near;
+        else if(cross<=1)cell.w += 1.5*near;
+      }
+    }
+  }
+  // 経路上マスの隣接マスも底上げ（隣接ボーナス）
+  const base=cand.map(c=>({...c}));
+  for(const cell of cand){
+    for(const b of base){
+      if(b.w<=1)continue;
+      const man=Math.abs(cell.r-b.r)+Math.abs(cell.c-b.c);
+      if(man===1)cell.w += b.w*0.15;    // 高確率マスの隣は少し確率が上がる
+    }
+  }
+  // 正規化：この設置イベントで罠は1個。全候補の重み合計を1として各マスの確率を出す
+  const total=cand.reduce((s,c)=>s+c.w,0)||1;
+  for(const c of cand)c.prob=c.w/total;
+  // 確率上位2マスのみ保存（罠は最大2個）
+  cand.sort((a,b)=>b.prob-a.prob);
+  const top=cand.slice(0,2).map(c=>({r:c.r,c:c.c,prob:c.prob}));
+  setTrapProbEntry(setterId, top);
+}
+/* 罠師IDごとに確率マップを保存（罠師1人につき最大2マス、エントリも罠師ごとに1つ） */
+function setTrapProbEntry(setterId, cells){
+  if(!G.trapProb)G.trapProb=[];
+  const idx=G.trapProb.findIndex(e=>e.setter===setterId);
+  const entry={setter:setterId, cells};
+  if(idx>=0)G.trapProb[idx]=entry; else G.trapProb.push(entry);
+}
+/* 指定マスの「罠がある推定確率」を返す（全罠師の中で最大値） */
+function trapProbAt(r,c){
+  if(!G.trapProb)return 0;
+  let p=0;
+  for(const e of G.trapProb){
+    for(const cell of e.cells){
+      if(cell.r===r&&cell.c===c)p=Math.max(p,cell.prob);
+    }
+  }
+  return p;
+}
+/* 罠師が倒れた／罠が実際に発動したら、その確率エントリを消す */
+function clearTrapProbForSetter(setterId){
+  if(!G.trapProb)return;
+  G.trapProb=G.trapProb.filter(e=>e.setter!==setterId);
+}
+/* マスを分かりやすい座標文字列にする（列A-F × 行1-6、盤面は6×6）。
+   プレイヤー視点で下が手前になるよう、行は上から1..6で表記する。 */
+function cellName(r,c){
+  const cols="ABCDEF";
+  return (cols[c]||"?")+(r+1);
+}
+/* 駒がfrom→現在位置へ移動したことをログに記録する */
+function logMove(p,fromR,fromC){
+  if(fromR===p.r&&fromC===p.c)return; // 動いていなければ記録しない
+  log(`${pieceLabel(p)}が ${cellName(fromR,fromC)} → ${cellName(p.r,p.c)} へ移動`, p.owner==="P"?"p":"e");
+}
 /* 駒に現在ついているバフ・デバフの一覧（情報パネル表示用） */
 function pieceStatuses(p){
   const out=[];
@@ -827,7 +915,7 @@ function newNetGame(first,rnd,deal){
   G={pieces:[],traps:[],bombs:[],kills:{P:0,E:0},
      phase:"setup",nphase:"setup",turn:"P",
      setupCount:{P:0,E:0},slotsLeft:1,currentActor:null,attackUsed:false,
-     respawnQueue:[],over:false,aiTypes:[]};
+     respawnQueue:[],over:false,trapProb:[],aiTypes:[]};
   UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
   pid=1; aiMoveHistory=[]; aiPosHistory={};
   $("#log").innerHTML="";
@@ -1022,6 +1110,7 @@ function killPiece(p,src,kind){
     const before=G.traps.length;
     G.traps=G.traps.filter(t=>t.setter!==p.id);
     if(G.traps.length<before)log("罠師の死により、仕掛けられていた罠が消えた","s");
+    clearTrapProbForSetter(p.id); // 推定確率マップも消す
   }
   // 調教師が倒れたら、その調教師が召喚した獣も消滅
   if(p.type==="chokyo"){
@@ -1284,15 +1373,49 @@ function moveDirs(p){
   if(p.type==="ninja"&&p.flags.invisible) return ALL8;
   return ORTHO;
 }
+/* 駒pが (r,c) へ1マス移動した後、残る行動力(apAfter)を確実に消費できるか（さらに動けるか）を判定。
+   apAfterが0なら常にOK。1以上残るなら、その位置からさらに合法移動が1つでもあればOK。 */
+function canSpendAPAfterStep(p, r, c, apAfter){
+  if(apAfter<=0)return true;
+  // pを仮に(r,c)へ移し、行動力apAfterでさらに動けるマスがあるか調べる
+  const or=p.r, oc=p.c, oap=p.ap;
+  p.r=r; p.c=c; p.ap=apAfter;
+  let ok=false;
+  for(const [dr,dc] of moveDirs(p)){
+    let nr=p.r+dr,nc=p.c+dc;
+    if(p.type==="boken" && (nc<0||nc>5))continue; // 端ワープはAP消費しないので「消費できる移動」に数えない
+    if(!inB(nr,nc))continue;
+    if(visAt(nr,nc,p.owner))continue;
+    if(!colorOk(p.owner,p.id,nr,nc))continue;
+    ok=true;break;
+  }
+  // 騎馬の跳躍でAP2を消費できるケースも救う（apAfter>=2のとき）
+  if(!ok && p.type==="kiba" && apAfter>=2){
+    for(const [dr,dc] of ALL8){
+      const mr=p.r+dr,mc=p.c+dc,jr=p.r+dr*2,jc=p.c+dc*2;
+      if(!inB(mr,mc)||!inB(jr,jc))continue;
+      if(!visAt(mr,mc,p.owner))continue;
+      if(visAt(jr,jc,p.owner))continue;
+      if(!colorOk(p.owner,p.id,jr,jc))continue;
+      ok=true;break;
+    }
+  }
+  p.r=or; p.c=oc; p.ap=oap;
+  return ok;
+}
 function stepOptions(p){
   const out=[];
   if(p.ap<1)return out;
   for(const [dr,dc] of moveDirs(p)){
     let nr=p.r+dr,nc=p.c+dc;
-    if(p.type==="boken"){nc=(nc+6)%6;}
+    let isWrap=false;
+    if(p.type==="boken" && (nc<0||nc>5)){ nc=(nc+6)%6; isWrap=true; } // 端ワープ（AP消費なし）
     if(!inB(nr,nc))continue;
     if(visAt(nr,nc,p.owner))continue;
     if(!colorOk(p.owner,p.id,nr,nc))continue;
+    const apAfter = isWrap ? p.ap : p.ap-1; // ワープはAPを消費しない
+    // 移動後に行動力が余り、かつそこから一切動けない「行き止まり」マスは候補から外す
+    if(!canSpendAPAfterStep(p, nr, nc, apAfter))continue;
     out.push([nr,nc]);
   }
   return out;
@@ -1326,7 +1449,13 @@ function enterSquare(p,nr,nc){
   // 罠チェック
   const ti=G.traps.findIndex(t=>t.r===nr&&t.c===nc&&t.owner!==p.owner);
   if(ti>=0){
+    const sprung=G.traps[ti];
     G.traps.splice(ti,1);
+    // 発動して位置が判明したマスは確率マップから除去する
+    if(G.trapProb){
+      for(const e of G.trapProb)e.cells=e.cells.filter(cl=>!(cl.r===nr&&cl.c===nc));
+      G.trapProb=G.trapProb.filter(e=>e.cells.length>0);
+    }
     sfx("trap");
     log(`${pieceLabel(p)}は罠にかかった！（1ダメ・次のターン行動力-1）`,"s");
     p.flags.apCut=true; // 次のターン開始時に行動力-1
@@ -1521,11 +1650,12 @@ function actorCanStillAct(){
   if(G.currentActor===null)return false;
   const p=byId(G.currentActor);
   if(!p||p.dead)return false;
-  // 行動力(AP)が残っていない駒は「必須の行動」は完了扱い
-  // （呪詛師・術士・悪霊などの行動力0で使える能力は任意なので強制しない）
   if(p.ap<1)return false;
+  // stepOptions/jumpOptions は「行動力を余らせず確実に消費できる移動」だけを返す。
+  // それが1つでもあるなら、まだ行動力を消費する義務が残っている。
   if(stepOptions(p).length>0)return true;
   if(jumpOptions(p).length>0)return true;
+  // 行動力は残るが、どこへも動けず消費できない＝この駒では消費不能。攻撃フェーズへ進んでよい。
   return false;
 }
 /* 行動可能な駒が1体でも存在するか（手詰まり救済用） */
@@ -1722,6 +1852,8 @@ function resolveAbilityClick(r,c){
         if(idx>=0){G.traps.splice(idx,1);log("最も古い罠を撤去して設置し直した","p",true);}
       }
       G.traps.push({owner:"P",r,c,setter:p.id});
+      // AIには罠の正確な位置は見えない。罠師の位置から周囲8マスの設置確率を推定して保存する
+      recordTrapProbability(p.id, p.r, p.c);
       log("罠を仕掛けた（敵には見えない）","p",true);sfx("pick");
       break;}
     case "medicine":{
@@ -1866,16 +1998,20 @@ function onCell(r,c){
           const canActHere=G.slotsLeft>0||G.currentActor===a.id;
           if(canActHere&&steps.includes(key)){
             if(!takeActionSlot(a))return;
+            const fr=a.r,fc=a.c;
             tryStep(a,r,c);
+            if(!a.dead)logMove(a,fr,fc);
             processRespawns(()=>render());
             return;
           }
           if(canActHere&&jumps.includes(key)){
             if(!takeActionSlot(a))return;
+            const fr=a.r,fc=a.c;
             a.ap-=2;
             log("騎馬が跳躍した！","p");
             enterSquare(a,r,c);
             sfx("move");
+            if(!a.dead)logMove(a,fr,fc);
             processRespawns(()=>render());
             return;
           }
@@ -2126,6 +2262,7 @@ function reachWithPaths(p){
 function startAITurn(){
   if(G.over)return;
   G.turn="E";G.phase="action";
+  G.attackUsed=false; // このターンでまだ通常攻撃していない
   for(const p of alive("E")){
     p.ap=Math.max(0,p.maxAp-(p.flags.apCut?1:0));
     if(p.flags.apCut)p.flags.slowedVisual=true; else p.flags.slowedVisual=false;
@@ -2133,12 +2270,12 @@ function startAITurn(){
     p.flags.usedFree=false;
     if(p.type==="tatehei")p.flags.block=null; // 盾は毎ターン更新
   }
-  setPhaseBar('<span class="turnE"><span class="spinner"></span>敵軍の手番 — '+(aiLevel==="max"?"深く思考中…（最強・最大8秒）":"思考中…")+'</span>');
+  setPhaseBar('<span class="turnE"><span class="spinner"></span>敵軍の手番 — '+(aiLevel==="strong"?"徹底思考中…（つよい・最大20秒）":aiLevel==="normal"?"深く思考中…（ふつう・最大8秒）":"思考中…")+'</span>');
   UI={mode:"ai",sel:null,targets:new Set(),ability:null,extra:{}};
   render();
   setTimeout(()=>{
-    if(aiLevel==="max"){
-      deepPlanAsync((res)=>{
+    if(aiLevel==="normal"||aiLevel==="strong"){
+      const doneCb=(res)=>{
         if(res && res.resign && (!res.plan || planIsIdle(res.plan))){
           offerResignation();
           return;
@@ -2147,8 +2284,11 @@ function startAITurn(){
         if(!plan || planIsIdle(plan)) plan=aiMakePlan();
         if(!plan || planIsIdle(plan)) plan=aiGuaranteedMove(); // 最終保証：必ず動く
         aiExecutePlan(plan);
-      });
+      };
+      if(aiLevel==="strong") deepPlanStrongAsync(doneCb);
+      else deepPlanAsync(doneCb);
     }else{
+      // やさしい：ヒューリスティック（時々ゆるい手）
       let plan=aiMakePlan();
       if(!plan || planIsIdle(plan)) plan=aiGuaranteedMove();
       aiExecutePlan(plan);
@@ -2186,7 +2326,7 @@ function offerResignation(){
     }}
   ]);
 }
-/* 最強モード：探索結果(ssBestMove)を aiExecutePlan が解釈できる形へ変換 */
+/* ふつう・つよいモード：探索結果(ssBestMove)を aiExecutePlan が解釈できる形へ変換 */
 /* 探索でモデル化済みの能力を持つ駒（これ以外は能力をヒューリスティックで補完） */
 const SS_ABILITY_MODELED=new Set(["kyuhei","sogeki","jusoshi"]);
 function deepPlanFromRes(res){
@@ -2210,6 +2350,64 @@ function deepPlan(){
 }
 function deepPlanAsync(onDone){
   ssBestMoveAsync(aiDepth, res=>onDone(deepPlanFromRes(res)));
+}
+/* つよいモード：有用な手を5候補に絞り、各手を15手先まで相手の応手も含めて徹底検証。
+   自分が指した後の相手の立場での最善応手まで読み切り、最終結果が最良の手を選ぶ。 */
+function deepPlanStrongAsync(onDone){
+  ssBestMoveStrongAsync(res=>onDone(deepPlanFromRes(res)));
+}
+function ssBestMoveStrongAsync(onDone){
+  ssNodeCap=SS_NODE_CAP_STRONG;
+  const prep=ssBestPrepare();
+  if(!prep){onDone({resign:false, plan:null, allLose:false});return;}
+  const {applied, fbPlan}=prep;
+  const STRONG_BUDGET=19000;               // 全体で最大約19秒（20秒以内に収める）
+  const overallDeadline=performance.now()+STRONG_BUDGET;
+  let bestPlan=fbPlan;
+  let order=applied.map((_,i)=>i);
+  const valById={};
+  // フェーズ1：浅い反復深化で有用手を絞り込む（move orderingを作る）
+  let depth=2;
+  const SHALLOW_MAX=6;
+  const shallowStep=()=>{
+    if(depth>SHALLOW_MAX || performance.now()>overallDeadline-1000){ deepPhase(); return; }
+    ssDeadline=performance.now()+2500;
+    const r=ssRunDepth(applied, depth, order, valById);
+    order=r.newOrder;
+    if(r.completedAny && r.localPlan){
+      bestPlan=r.localPlan;
+      if(r.localBest>=1e6){ finish(); return; }
+    }
+    depth++;
+    setTimeout(shallowStep,0);
+  };
+  // フェーズ2：上位5候補だけを15手先まで深く探索
+  let di=0, deepOrder=[], deepDepth=8;
+  const deepPhase=()=>{
+    // 上位5手（move ordering順）に絞る
+    deepOrder=order.slice(0, Math.min(5, order.length));
+    deepIterate();
+  };
+  const deepIterate=()=>{
+    if(deepDepth>AI_DEPTH_STRONG || performance.now()>overallDeadline){ finish(); return; }
+    // 残り時間を各深さに割り当て
+    ssDeadline=Math.min(overallDeadline, performance.now()+ (overallDeadline-performance.now()) );
+    const r=ssRunDepth(applied, deepDepth, deepOrder, valById);
+    deepOrder=r.newOrder.filter(i=>deepOrder.includes(i)); // 5候補内で並べ替え維持
+    if(r.completedAny && r.localPlan){
+      bestPlan=r.localPlan;
+      if(r.localBest>=1e6){ finish(); return; }
+    }
+    deepDepth++;
+    setTimeout(deepIterate,0);
+  };
+  const finish=()=>{
+    // 5候補の評価値のみで投了判定
+    const evaluated=deepOrder.length?deepOrder.map(i=>valById[i]).filter(v=>v!==undefined):Object.values(valById);
+    const allLose = evaluated.length>0 && evaluated.every(v=>v<=-1e6);
+    onDone({resign:allLose, plan:bestPlan, allLose});
+  };
+  setTimeout(shallowStep,0);
 }
 /* 指定駒が dest に移動した「と仮定して」最も有効な能力を1つ選ぶ（簡易） */
 /* 魔女の入替プラン：味方同士 or 敵同士を入れ替えて最も得をする組を選ぶ */
@@ -2409,7 +2607,7 @@ function heuristicAbilityFor(p,dr,dc){
 }
 
 /* =========================================================
-   最強モード：アルファベータ探索（10手先読み）
+   深層探索：アルファベータ探索（ふつう10手／つよい15手先読み）
    独立した軽量シミュレータ上で手番交代を含む先読みを行う。
    サポート駒：剣士/弓兵/騎馬/戦士/盾兵/狙撃手/吸血鬼/呪詛師
    （AIプール＝この8種なので全手を厳密展開できる）
@@ -2425,7 +2623,7 @@ const SS={ // 静的データ（全24種対応）
 const SS_MAXAP={kiba:2,ninja:2,boken:2};
 function ssClone(st){
   return {
-    side:st.side, kP:st.kP, kE:st.kE, traps:st.traps,
+    side:st.side, kP:st.kP, kE:st.kE, trapProb:st.trapProb,
     ps:st.ps.map(p=>({id:p.id,t:p.t,o:p.o,r:p.r,c:p.c,hp:p.hp,
       block:p.block?{r:p.block.r,c:p.block.c}:null,phoenix:p.phoenix,maxAp:p.maxAp,heroBoost:p.heroBoost,invis:p.invis}))
   };
@@ -2438,9 +2636,13 @@ function ssFromGame(side){
     phoenix:!!p.flags.phoenix, maxAp:p.maxAp, heroBoost:!!p.flags.heroBoost,
     invis:!!p.flags.invisible
   }));
-  // プレイヤーの罠マス（E側から見て踏むと1ダメージ＋次ターン行動力-1の危険地帯）
-  const traps=G.traps.filter(t=>t.owner==="P").map(t=>({r:t.r,c:t.c}));
-  return {side, kP:G.kills.P, kE:G.kills.E, ps, traps};
+  // 罠の正確な位置はAIには見えない。罠師の位置から推定した「設置確率マップ」を持たせる。
+  // {r,c,prob} の配列。probが高いマスほど罠がある可能性が高い。
+  const trapProb=[];
+  if(G.trapProb){
+    for(const e of G.trapProb)for(const cl of e.cells)trapProb.push({r:cl.r,c:cl.c,prob:cl.prob});
+  }
+  return {side, kP:G.kills.P, kE:G.kills.E, ps, trapProb};
 }
 const ssAt=(st,r,c)=>st.ps.find(p=>p.r===r&&p.c===c);
 function ssMoveDirs(t){ return (t==="kiba"||t==="ninja")?ALL8:ORTHO; }
@@ -2845,20 +3047,37 @@ function ssEval(st){
     }
   }
 
-  // === 既知の罠マス：踏むと1ダメージ＋次ターン行動力-1。設置された罠の周囲8マスを警戒 ===
-  // （罠師が「罠を設置してから」危険が発生する＝実際に置かれた罠だけを対象にする）
-  if(st.traps&&st.traps.length){
+  // === 罠：踏むと1ダメージ＋次ターン行動力-1。これは「バトルの先手を奪われる」ことと同義で、
+  //        このゲームでは先手を取られる＝非常に不利。罠は徹底的に回避する。===
+  // AIは罠の正確な位置を知らず、罠師の位置から推定した「設置確率マップ」で警戒する。
+  // 確率が高いマスほど強く避け、40%超のマスは最大限に警戒する（どうしても必要な時だけ通る）。
+  if(st.trapProb&&st.trapProb.length){
     for(const e of eP){
-      for(const tp of st.traps){
+      for(const tp of st.trapProb){
+        const prob=tp.prob||0;
         if(e.r===tp.r&&e.c===tp.c){
-          v-=120;                       // 罠マスに乗っている＝確実に被害
-          if(e.hp<=1)v-=120;            // 瀕死なら踏むと落ちる恐れ、さらに重く
+          // そのマスに乗っている＝確率ぶんの被害期待値。40%超なら決定的に嫌う。
+          if(prob>=0.40) v-= 300 + prob*400;   // 最大警戒（乗るのは一か八かの時だけ）
+          else           v-= prob*500;          // 確率に比例して忌避
+          if(e.hp<=1)    v-= prob*300;          // 瀕死なら踏むと落ちる恐れ
         }else{
-          const cheb=Math.max(Math.abs(e.r-tp.r),Math.abs(e.c-tp.c)); // 周囲8マス＝チェビシェフ距離
           const man=Math.abs(e.r-tp.r)+Math.abs(e.c-tp.c);
-          if(cheb===1)v-=(man===1?26:14);// 罠に隣接（縦横は特に、次に踏みやすい）
-          else if(cheb===2)v-=8;         // 2マス圏も軽く警戒
+          if(man===1) v-= prob*120;             // 高確率マスの隣は次に踏みうる
+          else if(man===2) v-= prob*40;
         }
+      }
+    }
+  }
+  // 潜在的な罠ゾーン：罠師が生存していると、まだ見えていない罠が仕掛けられている可能性がある。
+  // 罠師の周辺（移動＋設置が届く範囲）に安易に侵入すると罠を踏むリスクが高いので警戒する。
+  for(const trapper of pP.filter(x=>x.t==="wanashi")){
+    for(const e of eP){
+      // 罠師の可動域を考え、周囲3マス圏を潜在危険域とみなす
+      const cheb=Math.max(Math.abs(e.r-trapper.r),Math.abs(e.c-trapper.c));
+      if(cheb<=3){
+        // 近いほど罠を踏むリスク大。既知の罠ほどではないが確実に警戒する
+        v-=(4-cheb)*24;
+        if(e.hp<=1)v-=(4-cheb)*10; // 瀕死駒は特に罠圏に入れたくない
       }
     }
   }
@@ -2874,14 +3093,7 @@ function ssEval(st){
     }
   }
 
-  // === 罠師：罠を設置していない罠師の周囲は軽い警戒に留める（設置後は上の罠マス評価が効く）===
-  for(const tr of pP.filter(x=>x.t==="wanashi")){
-    // この罠師が既に置いた罠の数（多いほど周囲の危険は罠マス評価で反映済み）
-    for(const e of eP){
-      const man=Math.abs(e.r-tr.r)+Math.abs(e.c-tr.c);
-      if(man<=2)v-=(3-man)*8;          // 罠師本体への近接は控えめ（実害は置かれた罠側で評価）
-    }
-  }
+
 
   // === 爆弾魔：次に隣接マスへ爆弾を置かれると、自分手番終了時に3×3へ1.5ダメージ ===
   // 爆風が届く範囲(爆弾魔の周囲2マス圏=設置マス＋その8近傍)に居るE駒について、
@@ -2980,14 +3192,16 @@ function ssEval(st){
 
 /* negamax + alpha-beta。時間制限・ノード上限つき */
 let ssNodes=0, ssDeadline=0, ssAbort=false;
-const SS_NODE_CAP=2600000;
+let ssNodeCap=2600000;
+const SS_NODE_CAP_NORMAL=2600000;
+const SS_NODE_CAP_STRONG=Number.MAX_SAFE_INTEGER; // つよいモードはノード上限を設けず、時間の許す限り深く読む
 function ssSearch(st,depth,alpha,beta){
   if(ssAbort)return ssEval(st);
   if(ssTerminal(st)||depth<=0){
     return ssEval(st);
   }
   if((++ssNodes&255)===0){
-    if(ssNodes>SS_NODE_CAP||performance.now()>ssDeadline){ssAbort=true;return ssEval(st);}
+    if(ssNodes>ssNodeCap||performance.now()>ssDeadline){ssAbort=true;return ssEval(st);}
   }
   let children=ssGenerate(st);
   // ムーブオーダリング＆幅制限（深いほど狭く）
@@ -3148,6 +3362,7 @@ function ssRunDepth(applied, depth, order, valById){
 }
 
 function ssBestMove(maxDepth){
+  ssNodeCap=SS_NODE_CAP_NORMAL;
   const prep=ssBestPrepare();
   if(!prep)return {resign:false, plan:null, allLose:false};
   const {applied, fbPlan}=prep;
@@ -3170,6 +3385,7 @@ function ssBestMove(maxDepth){
 }
 /* 非同期版：各深さの間で描画に譲る（スピナーを回し、UIをブロックしない） */
 function ssBestMoveAsync(maxDepth, onDone){
+  ssNodeCap=SS_NODE_CAP_NORMAL;
   const prep=ssBestPrepare();
   if(!prep){onDone({resign:false, plan:null, allLose:false});return;}
   const {applied, fbPlan}=prep;
@@ -3360,8 +3576,9 @@ function aiMakePlan(){
   // 行動必須ルール：移動も能力もない候補は、他に選択肢がない場合のみ許可
   const acting=cands.filter(c=>(c.path&&c.path.length>0)||c.ability);
   const pool=acting.length?acting:cands;
-  if(aiLevel==="hard")return pool[0];
-  // ふつう：上位の中からランダム
+  // 難易度別：やさしいは上位からランダムでゆるい手、それ以外(フォールバック時)は最善手
+  if(aiLevel!=="easy")return pool[0];
+  // やさしい：上位の中からランダム
   const top=pool.filter(c=>c.score>=pool[0].score*0.8||pool.indexOf(c)<4);
   return top[Math.floor(Math.random()*Math.min(top.length,4))];
 }
@@ -3397,17 +3614,9 @@ function aiGuaranteedMove(){
         return {pieceId:p.id, path:[], jump:false, ability:{kind:"ranged",targetId:t.id}, attack:null};
     }
   }
-  // ③ 全消費できる移動が無ければ、部分消費でも移動する（それでも「行動はした」状態にする）
+  // ③ 全消費できる移動が無ければ、部分消費でも移動する（それでも行動力は消費する）
   if(anyMove)return anyMove;
-  // ④ どうしても動けない場合のみ、通常攻撃だけでも行う（本当の手詰まり救済）
-  for(const a of alive("E")){
-    if(PIECES[a.type].noNormal||a.flags.noAttack)continue;
-    for(const [r,c] of normalAttackCells(a)){
-      const t=visAt(r,c,"E");
-      if(t&&t.owner==="P"&&!t.flags.invisible)
-        return {pieceId:a.id, path:[], jump:false, ability:null, attack:{attackerId:a.id, targetId:t.id}};
-    }
-  }
+  // 通常攻撃はAPを消費しないため「行動」にならない。移動も遠距離も無理なら手なし（null）を返す。
   return null;
 }
 
@@ -3420,17 +3629,21 @@ function aiConsumeRemainingAP(pieceId){
     if(!p||p.dead||p.ap<1)return;
     const opts=stepOptions(p);
     const jopts=jumpOptions(p);
-    if(opts.length===0 && jopts.length===0)return; // これ以上動けない＝全消費扱い
+    if(opts.length===0 && jopts.length===0){ p.ap=0; return; } // これ以上動けない→待機扱いで残APを消費
     const threat=playerThreatMap();
-    const trapCells=G.traps.filter(t=>t.owner==="P");
+    const trappers=alive("P").filter(f=>f.type==="wanashi");
     const invisNinjas=alive("P").filter(f=>f.type==="ninja"&&f.flags.invisible);
     // 候補：通常移動（AP1）と跳躍（AP2）。安全なマスを優先
     let best=null, bestScore=-1e9;
     const evalCell=(r,c,cost)=>{
       const dmg=threat[r*6+c]||0;
       let s=-dmg*100;                 // 被弾しにくいマスを優先
-      // 既知の罠マスは強く避ける
-      for(const tp of trapCells){ if(tp.r===r&&tp.c===c)s-=150; else if(Math.abs(tp.r-r)+Math.abs(tp.c-c)===1)s-=20; }
+      // 推定確率マップで罠を回避（40%超は決定的に嫌う）
+      const tprob=trapProbAt(r,c);
+      if(tprob>=0.40) s-= 350 + tprob*400;   // 最大警戒
+      else if(tprob>0) s-= tprob*500;
+      // 罠師の潜在罠ゾーン（周囲3マス）も避ける
+      for(const tr of trappers){ const ch=Math.max(Math.abs(tr.r-r),Math.abs(tr.c-c)); if(ch<=3)s-=(4-ch)*22; }
       // 透明忍者の襲撃圏（ALL8で3マス以内）も避ける
       for(const nj of invisNinjas){ const ch=Math.max(Math.abs(nj.r-r),Math.abs(nj.c-c)); if(ch<=3)s-=(4-ch)*25; }
       // 相手に少し近づく（攻め圧）ボーナス
@@ -3442,12 +3655,14 @@ function aiConsumeRemainingAP(pieceId){
     for(const [r,c] of opts){ const s=evalCell(r,c,1); if(s>bestScore){bestScore=s;best={r,c,jump:false};} }
     for(const [r,c] of jopts){ const s=evalCell(r,c,2)+5; if(s>bestScore){bestScore=s;best={r,c,jump:true};} }
     if(!best)return;
+    const fr=p.r,fc=p.c;
     if(best.jump){
       if(p.ap<2)return;
       p.ap-=2; enterSquare(p,best.r,best.c); sfx("move");
     }else{
       tryStep(p,best.r,best.c);
     }
+    if(!p.dead)logMove(p,fr,fc);
   }
 }
 function aiExecutePlan(plan){
@@ -3471,6 +3686,7 @@ function aiExecutePlan(plan){
   if(plan){
     const p=byId(plan.pieceId);
     if(p){
+      const moFromR=p.r, moFromC=p.c; // 移動前の位置（ログ用）
       if(plan.jump&&plan.path.length){
         const [r,c]=plan.path[plan.path.length-1];
         steps.push(()=>{
@@ -3478,6 +3694,7 @@ function aiExecutePlan(plan){
           p.ap-=2;
           log("敵の騎馬が跳躍した！","e");
           enterSquare(p,r,c);sfx("move");
+          if(!p.dead)logMove(p,moFromR,moFromC);
         });
       }else{
         for(const [r,c] of plan.path){
@@ -3486,6 +3703,9 @@ function aiExecutePlan(plan){
             if(visAt(r,c,"E"))return;
             tryStep(p,r,c);
           });
+        }
+        if(plan.path.length){
+          steps.push(()=>{ if(!p.dead)logMove(p,moFromR,moFromC); });
         }
       }
       if(plan.ability){
@@ -3585,10 +3805,12 @@ function aiExecutePlan(plan){
             b.flags.beastOf=p.id; b.spawn=true;
             G.pieces.push(b);
             log("敵の調教師が獣を召喚した","e");sfx("place");
-            // 召喚した獣でそのターンのうちに先制攻撃を狙う
-            for(const [ar,ac] of normalAttackCells(b)){
-              const t=visAt(ar,ac,"E");
-              if(t&&t.owner==="P"&&!t.flags.invisible){ performAttack(b,t,"melee"); break; }
+            // 召喚した獣でそのターンのうちに先制攻撃を狙う（1ターン1回の通常攻撃制限内）
+            if(!G.attackUsed){
+              for(const [ar,ac] of normalAttackCells(b)){
+                const t=visAt(ar,ac,"E");
+                if(t&&t.owner==="P"&&!t.flags.invisible){ G.attackUsed=true; performAttack(b,t,"melee"); break; }
+              }
             }
           });
         }
@@ -3600,6 +3822,7 @@ function aiExecutePlan(plan){
     }
     if(plan.attack){
       steps.push(()=>{
+        if(G.attackUsed)return; // 1ターン1回の通常攻撃制限
         const a=byId(plan.attack.attackerId);
         let t=byId(plan.attack.targetId);
         if(!a||a.flags.noAttack)return;
@@ -3612,7 +3835,7 @@ function aiExecutePlan(plan){
             if(x&&x.owner==="P"){t=x;break;}
           }
         }
-        if(t)performAttack(a,t,"melee");
+        if(t){G.attackUsed=true;performAttack(a,t,"melee");}
       });
     }
   }
@@ -3622,10 +3845,13 @@ function aiExecutePlan(plan){
     if(G.over)return;
     if(G.respawnQueue.length){processRespawns(run);return;}
     if(i>=steps.length){
-      // 検証：このターンでE軍が実際に行動力を消費したか（通常攻撃はAPを消費しないので行動と認めない）
-      if(aiTotalAP()>=preAP){
-        // 行動力を1も消費していない → APを消費する手を強制実行して必ず1駒使い切る
+      // 検証：このターンでE軍が実際に「行動力を消費」したか。
+      // 通常攻撃は行動力を消費しないため、攻撃だけではターンエンドを認めない。
+      const apConsumed = aiTotalAP()<preAP;
+      if(!apConsumed){
+        // 行動力を1も消費していない → 必ずどれか1駒の行動力を使い切る手を強制実行する
         if(aiForceAnyAction()){ render(); setTimeout(finishAITurn,300); return; }
+        // ここに来るのは全駒が行動力0（もう誰も動けない）＝合法的に消費し切った状態のみ。
       }
       finishAITurn();return;
     }
@@ -3678,6 +3904,7 @@ function aiForceAnyAction(){
   return false;
 }
 function aiApplyMoveNow(p,info){
+  const fr=p.r,fc=p.c;
   if(info.jump && p.ap>=2){
     const [r,c]=info.path[info.path.length-1];
     p.ap-=2; enterSquare(p,r,c); sfx("move");
@@ -3688,13 +3915,15 @@ function aiApplyMoveNow(p,info){
       tryStep(p,r,c);
     }
   }
+  if(!p.dead)logMove(p,fr,fc);
 }
 function aiTryOneAttack(){
+  if(G.attackUsed)return false; // 1ターン1回の通常攻撃制限
   for(const a of alive("E")){
     if(PIECES[a.type].noNormal||a.flags.noAttack)continue;
     for(const [r,c] of normalAttackCells(a)){
       const t=visAt(r,c,"E");
-      if(t&&t.owner==="P"&&!t.flags.invisible){ performAttack(a,t,"melee"); return true; }
+      if(t&&t.owner==="P"&&!t.flags.invisible){ G.attackUsed=true; performAttack(a,t,"melee"); return true; }
     }
   }
   return false;
@@ -3984,9 +4213,9 @@ function showStart(){
     </label>
     <div class="ruleSec"><h3>ソロプレイ（AI対戦）</h3>
       <div class="choiceList">
-        <button class="act" id="lvNormal">ふつう — 時々ゆるい手を指す</button>
-        <button class="act" id="lvHard">つよい — 常に最善の1手</button>
-        <button class="act" id="lvMax">★最強★ — 10手先を読む深層思考</button>
+        <button class="act" id="lvEasy">やさしい — 時々ゆるい手を指す</button>
+        <button class="act" id="lvNormal">ふつう — 10手先を読む深層思考</button>
+        <button class="act" id="lvStrong">つよい — 15手先まで相手の応手も含め徹底検証（最大20秒）</button>
       </div>
     </div>
     <div class="ruleSec"><h3>オンライン対戦（ルームコード）</h3>
@@ -4000,9 +4229,9 @@ function showStart(){
   `,[]);
   const rc=$("#rndChk"); if(rc)rc.checked=randomDeal;
   const syncRnd=()=>{randomDeal=$("#rndChk").checked;};
+  $("#lvEasy").onclick=()=>{syncRnd();aiLevel="easy";closeModal();newGame();};
   $("#lvNormal").onclick=()=>{syncRnd();aiLevel="normal";closeModal();newGame();};
-  $("#lvHard").onclick=()=>{syncRnd();aiLevel="hard";closeModal();newGame();};
-  $("#lvMax").onclick=()=>{syncRnd();aiLevel="max";closeModal();newGame();};
+  $("#lvStrong").onclick=()=>{syncRnd();aiLevel="strong";closeModal();newGame();};
   $("#btnHost").onclick=()=>{syncRnd();closeModal();hostRoom();};
   $("#btnJoin").onclick=()=>{syncRnd();closeModal();joinRoom();};
 }
