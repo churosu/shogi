@@ -456,7 +456,7 @@ function recordTrapProbability(setterId, pr, pc){
     if(at(r,c))continue;                 // 駒がいるマスには罠を置けない
     cand.push({r,c,w:1});                // 基本重み
   }
-  if(!cand.length){ setTrapProbEntry(setterId, []); return; }
+  if(!cand.length){ return; } // 置ける候補が無ければ何も記録しない
   // 敵(E=AI)の駒のうち、この罠師に最も近い駒たちの方向を「経路方向」とみなす
   const foes=alive("E");
   for(const cell of cand){
@@ -488,31 +488,39 @@ function recordTrapProbability(setterId, pr, pc){
       if(man===1)cell.w += b.w*0.15;    // 高確率マスの隣は少し確率が上がる
     }
   }
-  // 正規化：この設置イベントで罠は1個。全候補の重み合計を1として各マスの確率を出す
-  const total=cand.reduce((s,c)=>s+c.w,0)||1;
-  for(const c of cand)c.prob=c.w/total;
-  // 確率上位2マスのみ保存（罠は最大2個）
-  cand.sort((a,b)=>b.prob-a.prob);
-  const top=cand.slice(0,2).map(c=>({r:c.r,c:c.c,prob:c.prob}));
-  setTrapProbEntry(setterId, top);
+  // === 各マスの相対確率（この1個の罠がどのマスに置かれたか）===
+  // 1回の設置イベントでは罠は1個なので、8候補マスの確率合計は1（100%）になる。
+  const totalW=cand.reduce((s,c)=>s+c.w,0)||1;
+  for(const c of cand)c.prob=c.w/totalW;
+  // この設置イベントの「8マス分の分布」をそのまま1件として保存する。
+  // 1人の罠師につき最大2件（＝罠は最大2個）まで保持し、古いものから捨てる。
+  addTrapProbEvent(setterId, cand.map(c=>({r:c.r,c:c.c,prob:c.prob})));
 }
-/* 罠師IDごとに確率マップを保存（罠師1人につき最大2マス、エントリも罠師ごとに1つ） */
-function setTrapProbEntry(setterId, cells){
+/* 罠設置イベント（8マス分の確率分布）を1件追加する。
+   1人の罠師につき最大2件（罠は最大2個）まで保持し、超えたら最も古い件を捨てる。 */
+function addTrapProbEvent(setterId, cells){
   if(!G.trapProb)G.trapProb=[];
-  const idx=G.trapProb.findIndex(e=>e.setter===setterId);
-  const entry={setter:setterId, cells};
-  if(idx>=0)G.trapProb[idx]=entry; else G.trapProb.push(entry);
+  G.trapProb.push({setter:setterId, cells});
+  // この罠師のイベントが2件を超えたら古い順に削除
+  const mine=G.trapProb.filter(e=>e.setter===setterId);
+  while(mine.length>2){
+    const oldest=mine.shift();
+    const idx=G.trapProb.indexOf(oldest);
+    if(idx>=0)G.trapProb.splice(idx,1);
+  }
 }
-/* 指定マスの「罠がある推定確率」を返す（全罠師の中で最大値） */
+/* 指定マスに罠がある推定確率。複数の設置イベント（最大2件）に同じマスが含まれる場合は、
+   各イベントの確率を独立事象として合成する： 1 - Π(1 - p_i)。
+   （＝「どれかのイベントでこのマスに罠が置かれた」確率） */
 function trapProbAt(r,c){
   if(!G.trapProb)return 0;
-  let p=0;
+  let miss=1; // すべてのイベントで「このマスに罠が無い」確率
   for(const e of G.trapProb){
     for(const cell of e.cells){
-      if(cell.r===r&&cell.c===c)p=Math.max(p,cell.prob);
+      if(cell.r===r&&cell.c===c){ miss*=(1-cell.prob); break; }
     }
   }
-  return p;
+  return 1-miss;
 }
 /* 罠師が倒れた／罠が実際に発動したら、その確率エントリを消す */
 function clearTrapProbForSetter(setterId){
@@ -2428,8 +2436,26 @@ function witchPlan(witch){
   };
   const risk=p=>(inDanger(p.r,p.c)?1:0)*(4-p.hp);
   const distTo=(r,c)=>{let m=99;for(const f of pAll)m=Math.min(m,Math.abs(f.r-r)+Math.abs(f.c-c));return m;};
+  // その位置(r,c)から、そのターンのうちに通常攻撃で敵を討てるか＆火力を評価
+  const attackValueAt=(piece,r,c)=>{
+    if(!SS_ATTACKER.has(piece.type))return 0;
+    const dmg=ssAtk({t:piece.type,heroBoost:piece.flags.heroBoost},"melee")||1;
+    let val=0;
+    const dirs=piece.type==="souhei"?[...DIAG,[1,0]]:ORTHO;
+    for(const [dr,dc] of dirs){
+      const f=pAll.find(x=>x.r===r+dr&&x.c===c+dc);
+      if(!f)continue;
+      // 入替直後に通常攻撃できる（swap→attack→相手ターンの順）
+      let s=dmg*8;
+      if(f.hp-dmg<=0)s+=30;                 // 討ち取れるなら大きく加点
+      if(piece.type==="kyuketsuki")s+=6;    // 吸血鬼：攻撃しつつ回復
+      if(piece.type==="kusushi")s+=4;       // 薬師：毒で攻撃＋味方回復運用
+      val=Math.max(val,s);
+    }
+    return val;
+  };
   let best=null,bestGain=0.5; // しきい値：少しでも得なら使う
-  // (a) 味方ペア入替：危険な味方を安全マスへ退避、かつ攻撃力の高い駒を前線(敵に近い側)へ
+  // (a) 味方ペア入替：危険な味方を安全マスへ退避、かつ火力の高い駒を前線(敵隣接)へ出撃させる
   for(let i=0;i<eAll.length;i++)for(let j=i+1;j<eAll.length;j++){
     const a=eAll[i],b=eAll[j];
     const before=risk(a)+risk(b);
@@ -2440,7 +2466,9 @@ function witchPlan(witch){
     const atkVal=p=>{const g={t:p.type,heroBoost:p.flags.heroBoost}; return SS_ATTACKER.has(p.type)?(ssAtk(g,"melee")||1):0;};
     const aggrBefore = atkVal(a)*(-distTo(a.r,a.c)) + atkVal(b)*(-distTo(b.r,b.c));
     const aggrAfter  = atkVal(a)*(-distTo(b.r,b.c)) + atkVal(b)*(-distTo(a.r,a.c));
-    const gain=(before-after)+(aggrAfter-aggrBefore)*0.35;
+    // 入替後、火力駒が敵隣接に来て即攻撃できるなら大きく加点（剣士/戦士/覚醒勇者/薬師/吸血鬼の出撃）
+    const strikeGain = Math.max(attackValueAt(a,b.r,b.c), attackValueAt(b,a.r,a.c)) * 0.15;
+    const gain=(before-after)+(aggrAfter-aggrBefore)*0.35 + strikeGain;
     if(gain>bestGain){bestGain=gain;best={kind:"swap",aId:a.id,bId:b.id};}
   }
   // (b) 敵ペア入替：脆い敵をこちらの攻撃役の隣（＝攻撃圏の先頭）へ引き出して討ち取る
@@ -2524,6 +2552,9 @@ function heuristicAbilityFor(p,dr,dc){
   switch(p.type){
     case "jutsushi":{ // 行動阻害（行0）：最も行動力の高い敵を狙う
       if(!foes.length)return null;
+      // 相手が魔女を持つなら、魔女自身の行動力を奪う＝そもそも入れ替えさせないのが最有力。
+      const witch=foes.find(f=>f.type==="majo");
+      if(witch)return {kind:"slow",targetId:witch.id};
       const t=foes.slice().sort((a,b)=>b.maxAp-a.maxAp)[0];
       return {kind:"slow",targetId:t.id};
     }
@@ -2601,8 +2632,31 @@ function heuristicAbilityFor(p,dr,dc){
     case "yusha":{ // 勇者：魔王が退場していれば近接特攻はsim側で扱う。ここでは何もしない
       return null;
     }
+    case "miko":{ // 巫女：味方に+1行動＝瀕死駒の撤退や先手確保に使う（HP0.5消費）
+      if(p.ap<1||p.hp<=0.5)return null;
+      const allies2=alive("E").filter(a=>a.id!==p.id&&a.type!=="miko");
+      if(!allies2.length)return null;
+      const threat=playerThreatMap();
+      const enemyHasWitch=alive("P").some(f=>f.type==="majo");
+      // 危険な位置にいる瀕死の味方を最優先で「もう一度動けるように」する（撤退支援）
+      let best=null,bestScore=0;
+      for(const a of allies2){
+        const danger=threat[a.r*6+a.c]||0;
+        let score=0;
+        if(a.hp<=1)score+=60;          // 瀕死ほど逃がしたい
+        else if(a.hp<=1.5)score+=30;
+        if(danger>0)score+=danger*40;  // 攻撃を受ける位置なら退避価値大
+        if(enemyHasWitch)score+=25;    // 魔女がいると撤退が難しい＝+1行動の価値が上がる
+        // 隣接空きマスがある（実際に動ける）味方のみ有効
+        const canMove=ORTHO.some(([dr,dc])=>inB(a.r+dr,a.c+dc)&&!at(a.r+dr,a.c+dc));
+        if(!canMove)score-=100;
+        if(score>bestScore){bestScore=score;best=a;}
+      }
+      if(best&&bestScore>=40)return {kind:"kagura",targetId:best.id};
+      return null;
+    }
     default:
-      return null; // 罠師/爆弾魔/軍師/巫女/魔女/超能力者/聖職者/不死鳥 等は移動・通常攻撃で運用
+      return null; // 罠師/爆弾魔/軍師/魔女/超能力者/聖職者/不死鳥 等は移動・通常攻撃で運用
   }
 }
 
@@ -2955,25 +3009,78 @@ function ssEval(st){
     }
   }
 
-  // === 追い詰め検知：脅威下のE駒に安全な逃げ場が少ないほど強く減点 ===
-  // （数手先に捕まる前に、まだ動けるうちに逃がすことを促す）
+  // === 追い詰め検知：脅威下のE駒の逃げ方を評価する ===
+  // 重要：隣接戦闘から「ただ逃げる」だけでは、行動力差が無い限り追いつかれて不利になるだけ。
+  //   逃げるなら“援護のある”マスへ逃げる必要がある：
+  //   (A) 自軍の弓兵・狙撃手の射程に追手が入る位置（＝逃げ込めば追手を撃てる）
+  //   (B) 自軍の剣士・戦士がカバー（隣接して反撃）に行ける位置
+  //   これらを満たす退避は加点、満たさない「ただ逃げるだけ」の退避は評価しない。
+  const eRanged=eP.filter(p=>p.t==="kyuhei"||p.t==="sogeki");
+  const eCover =eP.filter(p=>p.t==="kenshi"||p.t==="senshi"||p.t==="souhei"||p.t==="kiba");
+  // マス(r,c)に逃げた駒を追う「追手候補」＝そのマスに隣接攻撃で届くプレイヤー駒
+  const pursuersOf=(r,c)=>pP.filter(f=>!SS.noNormal.has(f.t)&&Math.abs(f.r-r)+Math.abs(f.c-c)===1);
+  // 追手がいる位置pに対して、自軍が援護（射程/カバー）できるか
+  const isSupported=(r,c)=>{
+    const pursuers=pursuersOf(r,c);
+    if(!pursuers.length)return false;
+    for(const pu of pursuers){
+      // (A) 弓兵・狙撃手の射程に追手が入るか
+      for(const rg of eRanged){
+        if(ssRangedCells({t:rg.t,o:"E"},rg.r,rg.c).some(([rr,cc])=>rr===pu.r&&cc===pu.c))return true;
+      }
+      // (B) 剣士・戦士・槍兵・騎馬が、追手の隣接マスへ1手で入れるか（カバー）
+      for(const cv of eCover){
+        if(cv.id===undefined)continue;
+        // 追手の隣接空きマスに、カバー駒が可動域(maxAp)内で到達できるか（簡易：チェビシェフ距離）
+        const reach=cv.maxAp||1;
+        for(const [dr,dc] of ORTHO){
+          const ar=pu.r+dr, ac=pu.c+dc;
+          if(!inB(ar,ac))continue;
+          if(st.ps.some(q=>q.r===ar&&q.c===ac))continue; // 空きマスのみ
+          const cheb=Math.max(Math.abs(cv.r-ar),Math.abs(cv.c-ac));
+          const man=Math.abs(cv.r-ar)+Math.abs(cv.c-ac);
+          const step=(cv.t==="kiba")?cheb:man; // 騎馬は斜め可
+          if(step<=reach)return true;
+        }
+      }
+    }
+    return false;
+  };
   for(const p of eP){
     const here=danger[p.r+","+p.c]||0;
     // 撃破圏内にいる駒だけを対象（HP<=被ダメ）
     if(here>0 && p.hp-here<=0){
       const dests=ssReach(st,p);
-      let safe=0, total=0;
+      let safeSupported=0, safeBare=0, total=0;
       for(const d of dests){
         if(d.r===p.r&&d.c===p.c)continue;
         total++;
         const dd=danger[d.r+","+d.c]||0;
-        if(p.hp-dd>0)safe++; // そのマスなら生き残れる
+        if(p.hp-dd>0){
+          // このマスへ逃げても、追手が来るなら援護が要る
+          if(pursuersOf(d.r,d.c).length===0) safeSupported++; // そもそも追手が届かない＝完全に安全
+          else if(isSupported(d.r,d.c))       safeSupported++; // 追手は来るが援護できる
+          else                                safeBare++;      // ただ逃げるだけ（追いつかれる）
+        }
       }
       if(total>0){
-        // 逃げ場ゼロ＝完全に詰み位置。逃げ場が少ないほど減点を強める
-        if(safe===0)v-=200*defMul;      // どこへ動いても取られる → ほぼ確定で失う
-        else if(safe<=1)v-=90*defMul;   // 逃げ道が細い → 早く逃がしたい
+        if(safeSupported===0 && safeBare===0){
+          v-=200*defMul;      // どこへ動いても取られる → ほぼ確定で失う
+        }else if(safeSupported===0){
+          // 逃げ場はあるが全て「ただ逃げるだけ」＝追いつかれて不利。ほぼ助けにならない
+          v-=120*defMul;
+        }else if(safeSupported<=1){
+          v-=40*defMul;       // 援護のある逃げ道が細い
+        }
+        // 援護のある退避マスが複数あるなら安全（追加減点なし）
       }
+    }
+  }
+  // 援護退避を促す加点：脅威下のE駒が「援護マス」に居るなら評価を上げる
+  for(const p of eP){
+    const here=danger[p.r+","+p.c]||0;
+    if(here>0 && p.hp-here>0){ // 被弾圏だが今は生存（＝踏みとどまっている）
+      if(isSupported(p.r,p.c))v+=18*defMul; // 援護のある位置での対峙は良い
     }
   }
 
@@ -3050,14 +3157,14 @@ function ssEval(st){
   // === 罠：踏むと1ダメージ＋次ターン行動力-1。これは「バトルの先手を奪われる」ことと同義で、
   //        このゲームでは先手を取られる＝非常に不利。罠は徹底的に回避する。===
   // AIは罠の正確な位置を知らず、罠師の位置から推定した「設置確率マップ」で警戒する。
-  // 確率が高いマスほど強く避け、40%超のマスは最大限に警戒する（どうしても必要な時だけ通る）。
+  // 確率が高いマスほど強く避け、18%超のマスは最大限に警戒する（どうしても必要な時だけ通る）。
   if(st.trapProb&&st.trapProb.length){
     for(const e of eP){
       for(const tp of st.trapProb){
         const prob=tp.prob||0;
         if(e.r===tp.r&&e.c===tp.c){
-          // そのマスに乗っている＝確率ぶんの被害期待値。40%超なら決定的に嫌う。
-          if(prob>=0.40) v-= 300 + prob*400;   // 最大警戒（乗るのは一か八かの時だけ）
+          // そのマスに乗っている＝確率ぶんの被害期待値。18%超なら決定的に嫌う。
+          if(prob>=0.18) v-= 300 + prob*400;   // 最大警戒（乗るのは一か八かの時だけ）
           else           v-= prob*500;          // 確率に比例して忌避
           if(e.hp<=1)    v-= prob*300;          // 瀕死なら踏むと落ちる恐れ
         }else{
@@ -3114,19 +3221,56 @@ function ssEval(st){
     }
   }
 
-  // === 魔女：入替で相手アタッカーが突然E駒の隣へ来るリスク（プレイヤーが魔女を持つ場合）===
+  // === 相手が魔女を盤面に持つ場合の総合対策 ===
+  // 魔女は「味方同士 or 敵同士の位置を入れ替える」。入替直後、入れ替わった相手駒は
+  // 基本的に行動力不足で動けず“再配置されるだけ”だが、これにより相手は容易に逃げ／追撃でき、
+  // こちらの瀕死駒は撤退が難しくなる。対策の最低条件は「必ず先手を取る」こと。
   if(pP.some(p=>p.t==="majo")){
-    const pAtk=pP.filter(x=>["kenshi","senshi","kiba","souhei","kyuketsuki","ninja"].includes(x.t)||(x.t==="yusha"&&x.heroBoost));
+    const pAtk=pP.filter(x=>["kenshi","senshi","kiba","souhei","kyuketsuki","ninja","sogeki","kyuhei"].includes(x.t)||(x.t==="yusha"&&x.heroBoost));
+    let worstAtk=0;for(const a of pAtk)worstAtk=Math.max(worstAtk,ssAtk(a,"melee"));
+    // 入替先候補＝魔女以外のプレイヤー駒の位置（そこへ相手アタッカーが飛んできうる）
+    const anchors=pP.filter(a=>a.t!=="majo");
+
     for(const e of eP){
-      for(const anchor of pP){
-        if(anchor.t==="majo")continue;
-        // anchor位置にアタッカーが入替で来ると隣接攻撃されうる
-        if(Math.abs(e.r-anchor.r)+Math.abs(e.c-anchor.c)===1 && pAtk.length){
-          let worst=0;for(const a of pAtk)worst=Math.max(worst,ssAtk(a,"melee"));
-          if(e.hp-worst<=0)v-=40; else v-=10;
-        }
+      // (1) どの位置に何が来ても対処できる備え：
+      //     アタッカーが入替でe隣接に来ると先手を奪われる。特に瀕死ほど致命的。
+      let adjAnchor=false;
+      for(const anchor of anchors){
+        if(Math.abs(e.r-anchor.r)+Math.abs(e.c-anchor.c)===1){adjAnchor=true;break;}
+      }
+      if(adjAnchor && pAtk.length){
+        if(e.hp-worstAtk<=0) v-=70;   // 入替→即撃破されうる配置は強く避ける
+        else                 v-=18;   // 先手を取られる不利
+      }
+
+      // (2) 瀕死のE駒は「逃がせなくなる」。魔女がいる間は前線／危険域に置かない。
+      //     相手は入替で追ってこられるので、脆い駒ほど後方の安全地帯へ。
+      if(e.hp<=1.5){
+        const frontExposure=Math.max(0,(4-dist(e,pP))); // プレイヤー駒に近いほど危険
+        v-=frontExposure*22;
+        if(e.hp<=1)v-=frontExposure*14; // HP1は特に致命的
       }
     }
+
+    // (3) 先手を取るための布石。各対策の有効度に応じて加点する。
+    //  ・術士：相手の魔女の行動力を奪えば「そもそも入れ替えさせない」＝最有力の対策。
+    //  ・悪霊：効果を受けていない駒は攻撃してくるので部分的（60点相当）。
+    //  ・巫女：どの駒でも行動力2にして距離を詰められるが、巫女自身が前線に晒される（60点相当）。
+    //  ・魔女：入れ替えを入れ替えで戻せる（相打ち）ほか、入替→通常攻撃の順を活かして
+    //         火力の高い駒（剣士・低HP戦士・覚醒勇者・薬師・吸血鬼）を前線へ出撃させられる。
+    const eJutsu=eP.find(p=>p.t==="jutsushi");
+    const eWitch=pP.find(p=>p.t==="majo");
+    if(eJutsu){
+      v+=40; // 魔女封じの最有力手段
+      // 術士が魔女に近い（次ターン減速が届く）ほど、入替そのものを止められる
+      if(eWitch){
+        const d=Math.abs(eJutsu.r-eWitch.r)+Math.abs(eJutsu.c-eWitch.c);
+        if(d<=3)v+=(4-d)*10; // 魔女を射程に捉えているほど高評価
+      }
+    }
+    if(eP.some(p=>p.t==="akuryo"))v+=16; // 60点相当：1体しか封じられない
+    if(eP.some(p=>p.t==="miko"))  v+=16; // 60点相当：巫女自身が前線に出るリスクあり
+    if(eP.some(p=>p.t==="majo"))  v+=22; // 入替を入替で相殺、かつ火力駒の出撃にも使える
   }
 
   // === 超能力者の周囲：押し出しで隊形を崩される。近接する脆いE駒を軽く警戒 ===
@@ -3159,25 +3303,6 @@ function ssEval(st){
     // 呪詛師の全体-0.5は瀕死のE駒に致命的。瀕死駒が多いほど警戒
     let frail=0;for(const p of eP)if(p.hp<=1)frail++;
     v-=frail*35;
-  }
-
-  // === 魔女：味方同士の入替で攻撃役を突然近距離へワープさせうる ===
-  // プレイヤーのアタッカーが「魔女経由で」E駒の隣へ来る可能性を警戒
-  if(pP.some(p=>p.t==="majo")){
-    const pAttackers=pP.filter(x=>["kenshi","senshi","kiba","souhei","kyuketsuki","ninja"].includes(x.t)||(x.t==="yusha"&&x.heroBoost));
-    // 魔女以外のプレイヤー駒の位置＝ワープ先候補。その隣にE駒がいると危険
-    for(const e of eP){
-      for(const anchor of pP){
-        if(anchor.t==="majo")continue;
-        // anchorの位置にアタッカーが入替で来たら隣接攻撃されうる
-        if(Math.abs(e.r-anchor.r)+Math.abs(e.c-anchor.c)===1 && pAttackers.length>0){
-          // そのアタッカーの想定ダメージで倒されるなら減点
-          let worst=0;for(const a of pAttackers)worst=Math.max(worst,ssAtk(a,"melee"));
-          if(e.hp-worst<=0)v-=45;
-          else v-=12;
-        }
-      }
-    }
   }
 
   // === 軍師・巫女：相手の手数・機動が増える前提でE前衛の突出をやや抑制 ===
@@ -3638,9 +3763,9 @@ function aiConsumeRemainingAP(pieceId){
     const evalCell=(r,c,cost)=>{
       const dmg=threat[r*6+c]||0;
       let s=-dmg*100;                 // 被弾しにくいマスを優先
-      // 推定確率マップで罠を回避（40%超は決定的に嫌う）
+      // 推定確率マップで罠を回避（18%超は決定的に嫌う）
       const tprob=trapProbAt(r,c);
-      if(tprob>=0.40) s-= 350 + tprob*400;   // 最大警戒
+      if(tprob>=0.18) s-= 350 + tprob*400;   // 最大警戒
       else if(tprob>0) s-= tprob*500;
       // 罠師の潜在罠ゾーン（周囲3マス）も避ける
       for(const tr of trappers){ const ch=Math.max(Math.abs(tr.r-r),Math.abs(tr.c-c)); if(ch<=3)s-=(4-ch)*22; }
@@ -3811,6 +3936,33 @@ function aiExecutePlan(plan){
                 const t=visAt(ar,ac,"E");
                 if(t&&t.owner==="P"&&!t.flags.invisible){ G.attackUsed=true; performAttack(b,t,"melee"); break; }
               }
+            }
+          });
+        }else if(plan.ability.kind==="kagura"){
+          steps.push(()=>{
+            if(p.dead||p.ap<1||p.hp<=0.5)return;
+            const t=byId(plan.ability.targetId);
+            if(!t||t.owner!=="E"||t.id===p.id)return;
+            p.ap--;p.hp=r2(p.hp-0.5);
+            t.ap++;t.flags.mikoBuff=true;
+            log(`敵の巫女の神楽…${pieceLabel(t)}の行動力+1`,"e");sfx("buff");
+            // 付与された駒を安全なマスへ退避させる（脅威の低いマスへ、罠も回避）
+            const threat=playerThreatMap();
+            let best=null,bs=1e9;
+            for(const [dr,dc] of moveDirs(t)){
+              const nr=t.r+dr,nc=t.c+dc;
+              if(!inB(nr,nc)||at(nr,nc))continue;
+              if(!colorOk("E",t.id,nr,nc))continue;
+              let s=(threat[nr*6+nc]||0)*100 + trapProbAt(nr,nc)*300;
+              // プレイヤー駒から遠ざかる
+              let md=99;for(const f of alive("P"))if(!f.flags.invisible)md=Math.min(md,Math.abs(nr-f.r)+Math.abs(nc-f.c));
+              s-=md*3;
+              if(s<bs){bs=s;best=[nr,nc];}
+            }
+            if(best&&t.ap>=1){
+              const fr=t.r,fc=t.c;
+              tryStep(t,best[0],best[1]);
+              if(!t.dead)logMove(t,fr,fc);
             }
           });
         }
