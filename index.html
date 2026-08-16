@@ -2985,12 +2985,11 @@ function ssEval(st){
 
   // === スコア状況による守備倍率 ===
   // 勝ち点をプレイヤーに先行されている（kP>kE）＝あと1つ取られると負け。
-  // この時は駒を失わないこと（逃げ）の価値を大きく引き上げる。
-  // 同点・リード時は従来通り攻めの価値を保つ。
+  // この時は駒を失わないことの価値をやや引き上げるが、過度に守りに入って
+  // 逃げ回るのは本末転倒（勝つには2点取る必要がある）なので控えめに。
   let defMul=1.0;
   if(st.kP>st.kE){
-    // 特に kP=1,kE=0（次に取られたら敗北）は最大級の守備重視
-    defMul = (st.kP-st.kE>=1 && st.kP>=1) ? 2.2 : 1.6;
+    defMul = (st.kP>=1) ? 1.35 : 1.2; // 以前は2.2/1.6で守りすぎだった
   }
 
   // === プレイヤーの脅威マップ：危険マスに居るE駒を強く割り引く ===
@@ -3050,6 +3049,16 @@ function ssEval(st){
     const here=danger[p.r+","+p.c]||0;
     // 撃破圏内にいる駒だけを対象（HP<=被ダメ）
     if(here>0 && p.hp-here<=0){
+      // ただし、この駒が隣接する敵を「先制で討てる」なら、逃げより攻撃が優先。
+      // その場合は追い詰め減点を課さない（攻めに転じるべき局面）。
+      let canKillNow=false;
+      if(!SS.noNormal.has(p.t)){
+        const dmg=ssAtk({t:p.t,heroBoost:p.heroBoost},"melee")||1;
+        for(const f of pP){
+          if(Math.abs(p.r-f.r)+Math.abs(p.c-f.c)===1 && f.hp-dmg<=0){canKillNow=true;break;}
+        }
+      }
+      if(canKillNow)continue; // 先制撃破できるなら逃げ評価しない
       const dests=ssReach(st,p);
       let safeSupported=0, safeBare=0, total=0;
       for(const d of dests){
@@ -3057,22 +3066,19 @@ function ssEval(st){
         total++;
         const dd=danger[d.r+","+d.c]||0;
         if(p.hp-dd>0){
-          // このマスへ逃げても、追手が来るなら援護が要る
-          if(pursuersOf(d.r,d.c).length===0) safeSupported++; // そもそも追手が届かない＝完全に安全
-          else if(isSupported(d.r,d.c))       safeSupported++; // 追手は来るが援護できる
-          else                                safeBare++;      // ただ逃げるだけ（追いつかれる）
+          if(pursuersOf(d.r,d.c).length===0) safeSupported++;
+          else if(isSupported(d.r,d.c))       safeSupported++;
+          else                                safeBare++;
         }
       }
       if(total>0){
         if(safeSupported===0 && safeBare===0){
-          v-=200*defMul;      // どこへ動いても取られる → ほぼ確定で失う
+          v-=160*defMul;      // どこへ動いても取られる → ほぼ確定で失う
         }else if(safeSupported===0){
-          // 逃げ場はあるが全て「ただ逃げるだけ」＝追いつかれて不利。ほぼ助けにならない
-          v-=120*defMul;
+          v-=55*defMul;       // 逃げてもただ追われるだけ（以前-120→緩和）
         }else if(safeSupported<=1){
-          v-=40*defMul;       // 援護のある逃げ道が細い
+          v-=25*defMul;
         }
-        // 援護のある退避マスが複数あるなら安全（追加減点なし）
       }
     }
   }
@@ -3093,14 +3099,43 @@ function ssEval(st){
       v-=dmin*adv; // 出撃・強襲は前へ出る価値大、牽制・迎撃は小（後衛を保つ）
       // 迎撃・牽制の遠距離/罠役は、近づきすぎ（隣接）を軽くペナルティ（後方で運用）
       if((role==="intercept"||role==="control") && dmin===1 && SS.noNormal.has(p.t))v-=15;
-      // 通常攻撃を先に当てられる間合い（隣接）で、返り討ちに遭わない駒は加点
+      // 通常攻撃を先に当てられる間合い（隣接）で、返り討ちに遭わない駒は強く加点。
+      // 「先手を取れる場面では接近して攻撃に転じる」ことを最優先で促す。
       if(!SS.noNormal.has(p.t)&&dmin===1){
         const dgot=danger[p.r+","+p.c]||0;
-        if(p.hp-dgot>0)v+=45; // 先制して生き残れる好位置
+        if(p.hp-dgot>0){
+          v+=70; // 先制して生き残れる好位置（以前の45から強化）
+          // 隣接する敵をこの先制で削れる／討てるなら追加で大きく加点
+          for(const f of pP){
+            if(SS.noNormal.has(p.t))break;
+            if(Math.abs(p.r-f.r)+Math.abs(p.c-f.c)!==1)continue;
+            const dmg=ssAtk({t:p.t,heroBoost:p.heroBoost},"melee")||1;
+            if(f.hp-dmg<=0)v+=90;      // 先制で撃破できる＝勝ちに直結
+            else v+=dmg*22;            // 削るだけでも次の先手の価値を上げる
+          }
+        }
       }
     }
   }
   for(const p of pP){ if(eP.length)v+=dist(p,eP)*6; }
+
+  // === 弓兵・狙撃手の支援布陣 ===
+  // 基本は迎撃（待ち）だが、味方と接敵している敵駒を射程に捉えられる位置に居るなら、
+  // その敵を撃って味方のバトルを支援できる。そういう位置を積極的に評価する。
+  for(const rg of eP.filter(x=>x.t==="kyuhei"||x.t==="sogeki")){
+    const inRange=ssRangedCells({t:rg.t,o:"E"},rg.r,rg.c);
+    for(const f of pP){
+      // fが自軍E駒と隣接＝「接敵中」の敵か
+      const engaged=eP.some(a=>a.id!==rg.id&&Math.abs(a.r-f.r)+Math.abs(a.c-f.c)===1);
+      if(!engaged)continue;
+      // その接敵中の敵が、この弓兵/狙撃手の射程に入っているか
+      if(inRange.some(([rr,cc])=>rr===f.r&&cc===f.c)){
+        v+=34;                       // 味方の戦闘を射線で支援できる好位置
+        if(f.hp<=1)v+=40;            // 射撃で仕留められる敵なら特に価値大
+        else v+=(3-f.hp)*10;         // 削れている敵ほど支援価値が高い
+      }
+    }
+  }
 
   // === 戦法：後衛で運用すべき駒は前線に晒さない ===
   // 聖職者は倒れると味方全員に1ダメージ＝狙われてはいけない。危険地帯を強く忌避し後方を保つ。
@@ -3163,14 +3198,15 @@ function ssEval(st){
       for(const tp of st.trapProb){
         const prob=tp.prob||0;
         if(e.r===tp.r&&e.c===tp.c){
-          // そのマスに乗っている＝確率ぶんの被害期待値。18%超なら決定的に嫌う。
-          if(prob>=0.18) v-= 300 + prob*400;   // 最大警戒（乗るのは一か八かの時だけ）
-          else           v-= prob*500;          // 確率に比例して忌避
-          if(e.hp<=1)    v-= prob*300;          // 瀕死なら踏むと落ちる恐れ
+          // 罠を踏む実害＝先手を奪われる＋1ダメージ。確率に応じて忌避するが、
+          // 得点（撃破=5000）を妨げるほど過大にはしない。踏み抜かなければ無害なので。
+          if(prob>=0.18) v-= 90 + prob*220;    // 高確率マスは避けたいが、得点機会があれば踏んでよい
+          else           v-= prob*240;
+          if(e.hp<=1)    v-= prob*180;          // 瀕死なら踏むと落ちる恐れ＝やや強め
         }else{
           const man=Math.abs(e.r-tp.r)+Math.abs(e.c-tp.c);
-          if(man===1) v-= prob*120;             // 高確率マスの隣は次に踏みうる
-          else if(man===2) v-= prob*40;
+          if(man===1) v-= prob*60;
+          else if(man===2) v-= prob*20;
         }
       }
     }
@@ -3972,6 +4008,13 @@ function aiExecutePlan(plan){
     if(p){
       steps.push(()=>{ aiConsumeRemainingAP(p.id); });
     }
+    // 攻撃の直前に「まだ行動力を1も消費していない」なら、必ず先に移動して消費する。
+    // 通常攻撃はターンエンド直前の1回だけ＝必ず全ての移動が終わってから行う。
+    steps.push(()=>{
+      if(aiTotalAP()>=preAP){        // このターンまだAPを消費していない
+        aiForceAnyAction();          // 先に1駒の行動力を使い切る（移動が攻撃より前になる）
+      }
+    });
     if(plan.attack){
       steps.push(()=>{
         if(G.attackUsed)return; // 1ターン1回の通常攻撃制限
