@@ -332,7 +332,7 @@ const PIECES = {
   renkin:    {name:"錬金術師",k:"錬", ap:1, pvpOnly:true, desc:"行動力1＋HP0.5：隣接する空きマスに壁を設置（どの駒も入れない）。透明忍者がいるマスに置くとその忍者を撃破"},
   kyojin:    {name:"巨人",  k:"巨", ap:1, pvpOnly:true, maxHp:4, desc:"基礎HP・最大HPが4。通常攻撃可"},
   taka:      {name:"鷹",    k:"鷹", ap:1, pvpOnly:true, desc:"常時8方向へ移動可。行動力1消費で、隣接する駒を（その先に駒が続いても）飛び越えて着地。通常攻撃可"},
-  inseki:    {name:"隕石",  k:"隕", ap:1, pvpOnly:true, noNormal:true, desc:"通常攻撃不可。スキル「流星群」：行動力を全消費して発動、その場から消え、次の自分ターン開始時に5×5の四隅と中心線の8箇所から1つを選んで着弾（そのマスへ移動）。着弾マスの駒を撃破、周囲十字4マスに1ダメージ、隕石自身に0.5ダメージ"},
+  inseki:    {name:"隕石",  k:"隕", ap:1, pvpOnly:true, noNormal:true, desc:"通常攻撃不可。スキル「流星群」：行動力を全消費して発動、その場から消え、次の自分ターン開始時に5×5の四隅と中心線の8箇所から1つを選んで着弾（そのマスへ移動）。着弾マスの駒を撃破、周囲十字4マスに0.5ダメージ。反動は周囲に当てた時1・当てなかった時0.5"},
 };
 const PICKABLE = Object.keys(PIECES).filter(t=>t!=="kemono" && !PIECES[t].pvpOnly); // CPUや通常選出は仮駒を除外
 const PVP_PIECES = Object.keys(PIECES).filter(t=>PIECES[t].pvpOnly);                 // 対人戦のみ選べる仮駒
@@ -817,7 +817,7 @@ function netSerialize(){
   return {
     pieces:G.pieces.map(p=>({id:p.id,type:p.type,owner:p.owner,r:p.r,c:p.c,
       hp:p.hp,ap:p.ap,maxAp:p.maxAp,dead:p.dead,flags:p.flags})),
-    traps:G.traps,bombs:G.bombs,walls:(G.walls||[]).map(w=>({r:w.r,c:w.c,life:w.life})),meteors:(G.meteors||[]).map(m=>({id:m.id,owner:m.owner,cells:m.cells})),kills:G.kills,setupCount:G.setupCount,
+    traps:G.traps,bombs:G.bombs,walls:(G.walls||[]).map(w=>({r:w.r,c:w.c,life:w.life})),meteors:(G.meteors||[]).map(m=>({id:m.id,owner:m.owner,cells:m.cells,fuse:m.fuse,launchedThisTurn:m.launchedThisTurn})),kills:G.kills,setupCount:G.setupCount,
     phase:G.phase,turn:G.turn,nphase:G.nphase,
     respawnQueue:G.respawnQueue,over:G.over
   };
@@ -839,7 +839,7 @@ function applyState(S){
   G.traps=S.traps.map(t=>({owner:opp(t.owner),r:5-t.r,c:t.c}));
   G.bombs=S.bombs.map(b=>({owner:opp(b.owner),r:5-b.r,c:b.c,fuse:b.fuse}));
   G.walls=(S.walls||[]).map(w=>({r:5-w.r,c:w.c,life:w.life}));
-  G.meteors=(S.meteors||[]).map(m=>({id:m.id,owner:opp(m.owner),cells:m.cells.map(cc=>({r:5-cc.r,c:cc.c}))}));
+  G.meteors=(S.meteors||[]).map(m=>({id:m.id,owner:opp(m.owner),cells:m.cells.map(cc=>({r:5-cc.r,c:cc.c})),fuse:m.fuse,launchedThisTurn:m.launchedThisTurn}));
   G.kills={P:S.kills.E,E:S.kills.P};
   G.setupCount={P:S.setupCount.E,E:S.setupCount.P};
   G.phase=S.phase;G.turn=opp(S.turn);G.nphase=S.nphase;
@@ -1211,15 +1211,16 @@ function resolveMeteorImpact(meteorId, ir, ic){
     p.flags.meteorOrigin=null;
     p.r=ir; p.c=ic;               // 着弾マスへ移動
   }
-  // ③ 着弾マスの周囲十字4マスに1ダメージ
+  // ③ 着弾マスの周囲十字4マスに0.5ダメージ
+  let hitAround=false; // 周辺（十字）に1体でもダメージを与えたか
   for(const [dr,dc] of ORTHO){
     const r=ir+dr,c=ic+dc;
     if(!inB(r,c))continue;
     const t=at(r,c);
-    if(t && t.id!==meteorId){ dealDamage(t,1,p,"meteor"); }
+    if(t && t.id!==meteorId){ dealDamage(t,0.5,p,"meteor"); hitAround=true; }
   }
-  // ④ 隕石駒自身にも0.5ダメージ（反動）
-  if(p && !p.dead){ dealDamage(p,0.5,null,"meteor"); }
+  // ④ 隕石駒自身への反動：周辺に巻き込みがあれば1、無ければ0.5
+  if(p && !p.dead){ dealDamage(p, hitAround?1:0.5, null,"meteor"); }
 }
 function killPiece(p,src,kind){
   if(p.type==="fushicho" && !p.flags.phoenix){
@@ -1764,16 +1765,6 @@ function startPlayerTurn(){
     if(p.type==="tatehei")p.flags.block=null; // 盾は毎ターン更新（手番開始でリセット）
   }
   UI={mode:"action",sel:null,targets:new Set(),ability:null,extra:{}};
-  // 隕石の着弾：このプレイヤーに着弾待ちの隕石があれば、着弾箇所を選ばせる
-  const myMeteor=(G.meteors||[]).find(m=>m.owner==="P");
-  if(myMeteor){
-    const cells=myMeteor.cells.filter(c=>inB(c.r,c.c));
-    UI={mode:"meteorTarget",sel:null,targets:new Set(cells.map(c=>c.r+","+c.c)),ability:{meteorId:myMeteor.id},extra:{}};
-    setPhaseBar('<span class="turnP">隕石の着弾地点を選択してください（赤いマス）</span>');
-    saveTurnSnapshot();
-    render();
-    return;
-  }
   // 手番開始時点のスナップショットを保存（攻撃フェーズ移行前ならやり直し可能）
   saveTurnSnapshot();
   setPhaseBar('<span class="turnP">あなたの手番 — 行動フェーズ（駒1体を選んで移動／能力）</span>');
@@ -1838,6 +1829,38 @@ function shieldPhase(owner,cont){
   next();
 }
 function finishPlayerTurn(){
+  if(G.over)return;
+  // 隕石の着弾：自分のターンエンドごとに全隕石のfuseを1減らす。0以下になったものが着弾する。
+  if(G.meteors&&G.meteors.length){
+    for(const m of G.meteors){
+      if(m.owner!=="P")continue;
+      if(m.launchedThisTurn){ m.launchedThisTurn=false; continue; } // 発動したターンのエンドでは減らさない
+      m.fuse=(m.fuse==null?1:m.fuse)-1;
+    }
+  }
+  const readyMeteor=(G.meteors||[]).find(m=>m.owner==="P" && (m.fuse!=null && m.fuse<=0));
+  if(readyMeteor){
+    const cells=readyMeteor.cells.filter(c=>inB(c.r,c.c));
+    if(NET.on){
+      // オンラインでは操作の同期を避けるため、着弾地点を自動選択（最も敵駒を巻き込める候補）
+      let best=cells[0], bestScore=-1;
+      for(const c of cells){
+        let s=0; const d=at(c.r,c.c); if(d&&d.owner==="E")s+=3;
+        for(const [dr,dc] of ORTHO){const t=at(c.r+dr,c.c+dc); if(t&&t.owner==="E")s++;}
+        if(s>bestScore){bestScore=s;best=c;}
+      }
+      resolveMeteorImpact(readyMeteor.id,best.r,best.c);
+      processRespawns(()=>{ if(!G.over)finishPlayerTurnCore(); });
+      return;
+    }
+    UI={mode:"meteorTargetEnd",sel:null,targets:new Set(cells.map(c=>c.r+","+c.c)),ability:{meteorId:readyMeteor.id},extra:{}};
+    setPhaseBar('<span class="turnP">☄ 流星群が着弾します — 着弾地点を選択してください（赤いマス）</span>');
+    render();
+    return; // 着弾地点の選択後に finishPlayerTurnCore() でターン終了処理を続ける
+  }
+  finishPlayerTurnCore();
+}
+function finishPlayerTurnCore(){
   if(G.over)return;
   explodeBombs("P",()=>{
     if(G.over)return;
@@ -1992,7 +2015,7 @@ function abilityButtons(p){
         sfx("pick");render();
       });break;
     case "inseki":{
-      // 行動力を全消費して発動。その場から消え、次の自分ターン開始時に着弾。
+      // 行動力を全消費して発動。その場から消え、次の次の自分ターンエンド時に着弾。
       const cells=METEOR_OFFSETS.map(([dr,dc])=>[p.r+dr,p.c+dc]).filter(([r,c])=>inB(r,c));
       A("流星群（行動力を全消費）",canAct&&p.ap>=1&&!p.flags.pendingMeteor&&cells.length>0,()=>{
         if(!takeActionSlot(p))return;
@@ -2000,11 +2023,11 @@ function abilityButtons(p){
         p.flags.pendingMeteor=true;
         p.flags.invisible=true;            // その場から消える（被弾もしない）
         p.flags.meteorOrigin={r:p.r,c:p.c};
-        // 着弾候補8箇所（盤内）を記録
+        // 着弾候補8箇所（盤内）を記録。fuse=着弾までの自分のターンエンド回数（次の次＝2）
         if(!G.meteors)G.meteors=[];
         G.meteors=G.meteors.filter(m=>m.id!==p.id);
-        G.meteors.push({id:p.id,owner:p.owner,cells:cells.map(([r,c])=>({r,c}))});
-        log("流星群を呼んだ…次の自分の手番開始時に着弾する","p");
+        G.meteors.push({id:p.id,owner:p.owner,cells:cells.map(([r,c])=>({r,c})),fuse:2,launchedThisTurn:true});
+        log("流星群を呼んだ…次の次の自分のターンエンド時に着弾する","p");
         sfx("teleport");render();
       });break;}
     case "kusushi":{
@@ -2283,6 +2306,15 @@ function onCell(r,c){
       UI={mode:"action",sel:null,targets:new Set(),ability:null,extra:{}};
       setPhaseBar('<span class="turnP">あなたの手番 — 行動フェーズ（駒1体を選んで移動／能力）</span>');
       processRespawns(()=>{ saveTurnSnapshot(); render(); if(NET.on){netSend("go");} });
+      return;}
+    case "meteorTargetEnd":{
+      // ターンエンド時の着弾：着弾地点を選び、着弾後にターン終了処理を続ける
+      if(!UI.targets.has(key))return;
+      const meteorId=UI.ability&&UI.ability.meteorId;
+      resolveMeteorImpact(meteorId,r,c);
+      UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
+      render();
+      processRespawns(()=>{ if(G.over)return; finishPlayerTurnCore(); });
       return;}
     case "watch":{
       const p=at(r,c);
@@ -4717,13 +4749,13 @@ function render(){
     const cell=document.createElement("div");
     cell.className="cell "+(c<3?"L":"R")+(r===5?" homeP":r===0?" homeE":"");
     const key=r+","+c;
-    if(UI.targets.has(key)&&UI.mode==="meteorTarget")cell.classList.add("hl-meteor");
+    if(UI.targets.has(key)&&(UI.mode==="meteorTarget"||UI.mode==="meteorTargetEnd"))cell.classList.add("hl-meteor");
     else if(UI.targets.has(key))cell.classList.add("hl-tgt");
     if(moveSet.has(key))cell.classList.add("hl-move");
     if(jumpSet.has(key))cell.classList.add("hl-jump");
     if(atkSet.has(key))cell.classList.add("hl-atk");
     // 着弾待ちの隕石の候補マスは常に赤く警告表示（相手手番中も見える）
-    if(G.meteors&&G.meteors.some(m=>m.cells.some(cc=>cc.r===r&&cc.c===c))&&UI.mode!=="meteorTarget")cell.classList.add("hl-meteor-warn");
+    if(G.meteors&&G.meteors.some(m=>m.cells.some(cc=>cc.r===r&&cc.c===c))&&UI.mode!=="meteorTarget"&&UI.mode!=="meteorTargetEnd")cell.classList.add("hl-meteor-warn");
     const hl=document.createElement("div");hl.className="hl";cell.appendChild(hl);
     // markers（爆弾・罠・盾をセル下部に横並びで整頓表示）
     const mkRow=document.createElement("div");mkRow.className="mkRow";
