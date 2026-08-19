@@ -80,6 +80,8 @@ h1 small{font-size:11px;letter-spacing:.15em;color:var(--sub);display:block;marg
 .wallCell{background:repeating-linear-gradient(45deg,#6b5636,#6b5636 6px,#5a4830 6px,#5a4830 12px)!important;box-shadow:inset 0 0 0 2px #3a2f1c}
 .wallLife{position:absolute;bottom:2px;left:50%;transform:translateX(-50%);display:flex;gap:2px;z-index:3}
 .wallLife i{width:5px;height:5px;border-radius:1px;background:#3b82f6;box-shadow:0 0 2px rgba(59,130,246,.8);display:block}
+.meteorFuse{position:absolute;top:2px;left:50%;transform:translateX(-50%);display:flex;gap:2px;z-index:4}
+.meteorFuse i{width:5px;height:5px;border-radius:1px;background:#ff3c28;box-shadow:0 0 3px rgba(255,60,40,.95);display:block}
 .pvpCard{border-color:#7a5cff!important;box-shadow:0 0 0 1px rgba(122,92,255,.35)}
 .pvpTag{font-size:10px;background:#7a5cff;color:#fff;border-radius:4px;padding:1px 5px;margin-left:4px;vertical-align:middle}
 .mk-block{background:#2b3da0;color:#fff}
@@ -331,7 +333,7 @@ const PIECES = {
   kaizoku:   {name:"海賊",  k:"賊", ap:1, pvpOnly:true, desc:"周囲8マスへ移動可。通常攻撃対象が自分よりHPが高い時（同数不可）、与ダメ+1（合計2）"},
   renkin:    {name:"錬金術師",k:"錬", ap:1, pvpOnly:true, desc:"行動力1＋HP0.5：隣接する空きマスに壁を設置（どの駒も入れない）。透明忍者がいるマスに置くとその忍者を撃破"},
   kyojin:    {name:"巨人",  k:"巨", ap:1, pvpOnly:true, maxHp:4, desc:"基礎HP・最大HPが4。通常攻撃可"},
-  taka:      {name:"鷹",    k:"鷹", ap:1, pvpOnly:true, desc:"常時8方向へ移動可。行動力1消費で、隣接する駒を（その先に駒が続いても）飛び越えて着地。通常攻撃可"},
+  taka:      {name:"鷹",    k:"鷹", ap:1, pvpOnly:true, desc:"常時8方向へ移動可。行動力1消費で、駒や壁を1体飛び越えてすぐ先の空きマスに着地。着地の先にさらに飛び越えられる駒（壁）があれば、行動力を消費せず連続で飛び越えられる。通常攻撃可"},
   inseki:    {name:"隕石",  k:"隕", ap:1, pvpOnly:true, noNormal:true, desc:"通常攻撃不可。スキル「流星群」：行動力を全消費して発動、その場から消え、次の自分ターン開始時に5×5の四隅と中心線の8箇所から1つを選んで着弾（そのマスへ移動）。着弾マスの駒を撃破、周囲十字4マスに0.5ダメージ。反動は周囲に当てた時1・当てなかった時0.5"},
 };
 const PICKABLE = Object.keys(PIECES).filter(t=>t!=="kemono" && !PIECES[t].pvpOnly); // CPUや通常選出は仮駒を除外
@@ -1169,6 +1171,10 @@ function promptMaou(heroes,i,done){
 const BYPASS=new Set(["bomb","curse","chain","trap","ninja","meteor"]);
 function dealDamage(target,dmg,src,kind){
   if(!target||target.dead) return false;
+  // 流星群発動中の隕石は空へ昇っているため、狙撃手・弓兵・通常攻撃では狙えない
+  if(target.flags.pendingMeteor && kind!=="meteor"){
+    return false;
+  }
   if(target.flags.invisible && !BYPASS.has(kind)){
     log(`${pieceLabel(target)}は透明で攻撃を無効化！`,target.owner==="P"?"p":"e");
     return false;
@@ -1543,34 +1549,52 @@ function moveDirs(p){
    apAfterが0なら常にOK。1以上残るなら、その位置からさらに合法移動が1つでもあればOK。 */
 function canSpendAPAfterStep(p, r, c, apAfter){
   if(apAfter<=0)return true;
-  // pを仮に(r,c)へ移し、行動力apAfterでさらに動けるマスがあるか調べる
+  // (r,c)から行動力apAfterを「最後まで」使い切れる経路があるか、深さ優先で探索する。
+  // 浅い1手先だけの判定だと、途中で行き止まりになる経路を誤って許可してしまう
+  //（＝行動力3の猪が3マス移動できない不具合の原因）。
   const or=p.r, oc=p.c, oap=p.ap;
-  p.r=r; p.c=c; p.ap=apAfter;
-  let ok=false;
-  for(const [dr,dc] of moveDirs(p)){
-    let nr=p.r+dr,nc=p.c+dc;
-    if(p.type==="boken" && (nc<0||nc>5))continue; // 端ワープはAP消費しないので「消費できる移動」に数えない
-    if(!inB(nr,nc))continue;
-    if(visAt(nr,nc,p.owner))continue;
-    if(wallAt(nr,nc))continue;
-    if(!colorOk(p.owner,p.id,nr,nc))continue;
-    ok=true;break;
-  }
-  // 騎馬の跳躍でAP2を消費できるケースも救う（apAfter>=2のとき）
-  if(!ok && p.type==="kiba" && apAfter>=2){
-    for(const [dr,dc] of ALL8){
-      const mr=p.r+dr,mc=p.c+dc,jr=p.r+dr*2,jc=p.c+dc*2;
-      if(!inB(mr,mc)||!inB(jr,jc))continue;
-      if(wallAt(mr,mc))continue;               // 中間が壁なら飛び越え不可
-      if(!visAt(mr,mc,p.owner))continue;       // 中間に駒がある時のみ跳躍
-      if(visAt(jr,jc,p.owner))continue;
-      if(wallAt(jr,jc))continue;
-      if(!colorOk(p.owner,p.id,jr,jc))continue;
-      ok=true;break;
+  // 訪問中のマス集合（往復による無限ループと、同一マス再訪を防ぐ）
+  const canFrom=(cr,cc,ap,visited)=>{
+    if(ap<=0)return true;
+    // 通常移動（1マス＝AP1）
+    for(const [dr,dc] of moveDirs(p)){
+      let nr=cr+dr,nc=cc+dc;
+      if(p.type==="boken" && (nc<0||nc>5))continue; // 端ワープはAP消費しないので数えない
+      if(!inB(nr,nc))continue;
+      if(visAt(nr,nc,p.owner))continue;
+      if(wallAt(nr,nc))continue;
+      const key=nr+","+nc;
+      if(visited.has(key))continue;
+      // pの本来位置は空きとして扱う（既にvisAtで除外されないため明示不要）
+      visited.add(key);
+      // 色制約チェック用にpを仮移動
+      p.r=nr;p.c=nc;
+      const okColor=colorOk(p.owner,p.id,nr,nc);
+      p.r=or;p.c=oc;
+      if(okColor && canFrom(nr,nc,ap-1,visited)){ visited.delete(key); return true; }
+      visited.delete(key);
     }
-  }
+    // 騎馬の跳躍（AP2消費）
+    if(p.type==="kiba" && ap>=2){
+      for(const [dr,dc] of ALL8){
+        const mr=cr+dr,mc=cc+dc,jr=cr+dr*2,jc=cc+dc*2;
+        if(!inB(mr,mc)||!inB(jr,jc))continue;
+        if(wallAt(mr,mc))continue;
+        if(!visAt(mr,mc,p.owner))continue;
+        if(visAt(jr,jc,p.owner))continue;
+        if(wallAt(jr,jc))continue;
+        const key=jr+","+jc;
+        if(visited.has(key))continue;
+        p.r=jr;p.c=jc;const okColor=colorOk(p.owner,p.id,jr,jc);p.r=or;p.c=oc;
+        if(okColor){ visited.add(key); if(canFrom(jr,jc,ap-2,visited)){visited.delete(key);return true;} visited.delete(key); }
+      }
+    }
+    return false;
+  };
+  const visited=new Set([r+","+c]);
+  const result=canFrom(r,c,apAfter,visited);
   p.r=or; p.c=oc; p.ap=oap;
-  return ok;
+  return result;
 }
 function stepOptions(p){
   const out=[];
@@ -1595,8 +1619,10 @@ function stepOptions(p){
     if(wallAt(nr,nc))continue;               // 壁のあるマスには入れない
     if(!colorOk(p.owner,p.id,nr,nc))continue;
     const apAfter = p.ap-1;
-    // 移動後に行動力が余り、かつそこから一切動けない「行き止まり」マスは候補から外す
-    if(!canSpendAPAfterStep(p, nr, nc, apAfter))continue;
+    // 移動後に行動力が余り、かつそこから一切動けない「行き止まり」マスは候補から外す。
+    // ただし冒険者は1マス移動後に攻撃へ移行できるため、行き止まりでも候補に残す。
+    const canStopEarly=(p.type==="boken");
+    if(!canStopEarly && !canSpendAPAfterStep(p, nr, nc, apAfter))continue;
     out.push([nr,nc]);
   }
   return out;
@@ -1617,25 +1643,25 @@ function jumpOptions(p){
     }
     return out;
   }
-  // 鷹：隣接する障害物（駒・壁）を、その先に続いても連続で飛び越え、
-  //     最初の「駒も壁もない空きマス」に着地する（行動力1）。壁も飛び越え可能。
+  // 鷹：1体の駒（または壁）を飛び越えて、すぐ先の空きマスに着地する（行動力1）。
+  //     着地の先にさらに飛び越えられる障害物があれば、行動力を消費せず連続で飛び越えられる。
+  //     ＝ 障害物1つ→空き→障害物1つ→空き… という「1つ飛ばし」の連続をたどれる。
   if(p.type==="taka"&&p.ap>=1){
     const obstacle=(r,c)=>at(r,c)||wallAt(r,c); // 駒か壁が障害物
     for(const [dr,dc] of ALL8){
-      const ar=p.r+dr, ac=p.c+dc;
-      if(!inB(ar,ac))continue;
-      if(!obstacle(ar,ac))continue;            // 隣が空き＝跳躍ではない（通常移動の範囲）
-      // 隣接の障害物から先へ、連続する障害物（駒・壁）を飛び越え、最初の空きマスへ
-      let k=2, landed=null;
+      // その方向に「障害物1つ → 空きマス」で跳べる限り、着地点を連続で拾う
+      let k=1; // 現在地からのオフセット。奇数=障害物、偶数=着地の想定
       while(true){
-        const rr=p.r+dr*k, cc=p.c+dc*k;
-        if(!inB(rr,cc)){ break; }               // 盤外まで障害物が続く＝着地不可
-        if(!obstacle(rr,cc)){ landed=[rr,cc]; break; } // 最初の空きマス＝着地点
-        k++;                                     // まだ障害物が続く＝さらに飛び越える
+        const or=p.r+dr*k, oc=p.c+dc*k;           // 飛び越える障害物のマス
+        if(!inB(or,oc))break;
+        if(!obstacle(or,oc))break;                // 障害物が無ければ、そこで連続は途切れる
+        const lr=p.r+dr*(k+1), lc=p.c+dc*(k+1);   // 障害物のすぐ先＝着地マス
+        if(!inB(lr,lc))break;                     // 盤外なら着地不可
+        if(obstacle(lr,lc))break;                 // 着地先が障害物なら、この方向は打ち切り
+        // ここまで来れば (lr,lc) は着地可能な空きマス
+        if(colorOk(p.owner,p.id,lr,lc))out.push([lr,lc]);
+        k+=2;                                      // 次の「障害物→空き」を探す（無料で連続）
       }
-      if(!landed)continue;
-      if(!colorOk(p.owner,p.id,landed[0],landed[1]))continue;
-      out.push(landed);
     }
     return out;
   }
@@ -1676,7 +1702,7 @@ function enterSquare(p,nr,nc){
 function tryStep(p,nr,nc){
   // 冒険者の左右端ワープ（列0↔5をまたぐ横移動）は行動力を消費しない（1ターン1回）
   const isWrap = p.type==="boken" && nr===p.r && Math.abs(nc-p.c)===5;
-  // 猪の突進：直進で2マス移動した直後の通常攻撃は2ダメになる。方向転換すると不発。
+  // 猪の突進：行動力ぶん連続で直進した直後の通常攻撃のみ攻撃力上昇。方向転換すると不発。
   if(p.type==="inoshishi"){
     const dr=nr-p.r, dc=nc-p.c; // この1歩の方向（±1マス想定）
     const f=p.flags;
@@ -1685,7 +1711,8 @@ function tryStep(p,nr,nc){
     }else{
       f.chargeDir=[dr,dc]; f.chargeSteps=1; // 新しい方向で歩き直し
     }
-    f.chargeReady=(f.chargeSteps>=2); // 直進2マス到達で突進準備完了
+    // 行動力ぶん（ap2なら2マス、巫女で+1されたap3なら3マス）連続直進で突進準備完了
+    f.chargeReady=(f.chargeSteps>=(p.maxAp||2));
   }
   if(!isWrap)p.ap--;
   else p.flags.bokenWrapUsed=true;
@@ -4755,8 +4782,17 @@ function render(){
     if(jumpSet.has(key))cell.classList.add("hl-jump");
     if(atkSet.has(key))cell.classList.add("hl-atk");
     // 着弾待ちの隕石の候補マスは常に赤く警告表示（相手手番中も見える）
-    if(G.meteors&&G.meteors.some(m=>m.cells.some(cc=>cc.r===r&&cc.c===c))&&UI.mode!=="meteorTarget"&&UI.mode!=="meteorTargetEnd")cell.classList.add("hl-meteor-warn");
+    const meteorHere=(G.meteors||[]).find(m=>m.cells.some(cc=>cc.r===r&&cc.c===c));
+    if(meteorHere&&UI.mode!=="meteorTarget"&&UI.mode!=="meteorTargetEnd")cell.classList.add("hl-meteor-warn");
     const hl=document.createElement("div");hl.className="hl";cell.appendChild(hl);
+    // 着弾残りターン数を、壁と同様に赤い四角でマスに表示
+    if(meteorHere){
+      const fuseRow=document.createElement("div");
+      fuseRow.className="meteorFuse";
+      const remain=Math.max(0,(meteorHere.fuse==null?0:meteorHere.fuse));
+      for(let i=0;i<remain;i++){ const s=document.createElement("i"); fuseRow.appendChild(s); }
+      cell.appendChild(fuseRow);
+    }
     // markers（爆弾・罠・盾をセル下部に横並びで整頓表示）
     const mkRow=document.createElement("div");mkRow.className="mkRow";
     const addMk=(cls,txt,title)=>{
@@ -4947,8 +4983,9 @@ function closeModal(){$("#modalBack").classList.add("hidden");}
 let pickerArgs=null;
 function openPiecePicker(title,cb){
   pickerArgs={title,cb};
-  // 勇者は1駒制限：自軍に既に勇者がいれば選べない
+  // 勇者・隕石は1駒制限：自軍に既にいれば選べない
   const hasYusha=alive("P").some(p=>p.type==="yusha");
+  const hasInseki=alive("P").some(p=>p.type==="inseki");
   // 対人戦（オンライン）でのみ、仮追加の駒も選べる
   // 仮追加の駒はプレイヤー専用。CPU戦・対人戦どちらでもプレイヤーの選択肢に出す
   // （openPiecePickerはプレイヤーの配置・再配置でのみ呼ばれる）。CPUはPICKABLEのみ使う。
@@ -4956,10 +4993,11 @@ function openPiecePicker(title,cb){
   let html='<div class="pickGrid">';
   for(const t of list){
     const I=PIECES[t];
-    const locked=(t==="yusha"&&hasYusha);
+    const locked=(t==="yusha"&&hasYusha)||(t==="inseki"&&hasInseki);
+    const lockMsg=(t==="inseki")?"すでに隕石が場にいるため選べません":"すでに勇者が場にいるため選べません";
     html+=`<div class="pCard${locked?" locked":""}${I.pvpOnly?" pvpCard":""}" data-t="${t}"${locked?' data-locked="1"':""}>
       <div class="t"><span class="nm">${I.name}${I.pvpOnly?' <span class="pvpTag">仮</span>':''}</span><span class="ap">行動力${I.ap}</span></div>
-      <div class="d">${locked?"すでに勇者が場にいるため選べません":I.desc}</div></div>`;
+      <div class="d">${locked?lockMsg:I.desc}</div></div>`;
   }
   html+="</div>";
   openModal(title,html,[{label:"盤面を確認する",fn:()=>{closeModal();showPeekBack();}}]);
