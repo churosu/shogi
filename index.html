@@ -1644,35 +1644,43 @@ function jumpOptions(p){
     return out;
   }
   // 鷹：1体の駒（または壁）を飛び越えて、すぐ先の空きマスに着地する（行動力1）。
-  //     着地の先にさらに飛び越えられる障害物があれば、行動力を消費せず連続で飛び越えられる。
-  //     ＝ 障害物1つ→空き→障害物1つ→空き… という「1つ飛ばし」の連続をたどれる。
+  //     着地先の隣にさらに飛び越えられる駒（壁）がある場合は行動力+1され、その1で再度跳躍/移動できる。
   if(p.type==="taka"&&p.ap>=1){
     const obstacle=(r,c)=>at(r,c)||wallAt(r,c); // 駒か壁が障害物
     for(const [dr,dc] of ALL8){
-      // その方向に「障害物1つ → 空きマス」で跳べる限り、着地点を連続で拾う
-      let k=1; // 現在地からのオフセット。奇数=障害物、偶数=着地の想定
-      while(true){
-        const or=p.r+dr*k, oc=p.c+dc*k;           // 飛び越える障害物のマス
-        if(!inB(or,oc))break;
-        if(!obstacle(or,oc))break;                // 障害物が無ければ、そこで連続は途切れる
-        const lr=p.r+dr*(k+1), lc=p.c+dc*(k+1);   // 障害物のすぐ先＝着地マス
-        if(!inB(lr,lc))break;                     // 盤外なら着地不可
-        if(obstacle(lr,lc))break;                 // 着地先が障害物なら、この方向は打ち切り
-        // ここまで来れば (lr,lc) は着地可能な空きマス
-        if(colorOk(p.owner,p.id,lr,lc))out.push([lr,lc]);
-        k+=2;                                      // 次の「障害物→空き」を探す（無料で連続）
-      }
+      const or=p.r+dr, oc=p.c+dc;               // 隣接＝飛び越える障害物のマス
+      if(!inB(or,oc))continue;
+      if(!obstacle(or,oc))continue;             // 隣が空き＝跳躍ではない（通常移動の範囲）
+      const lr=p.r+dr*2, lc=p.c+dc*2;           // 障害物のすぐ先＝着地マス
+      if(!inB(lr,lc))continue;
+      if(obstacle(lr,lc))continue;              // 着地先が障害物なら不可（連続駒はまとめて越えられない）
+      if(!colorOk(p.owner,p.id,lr,lc))continue;
+      out.push([lr,lc]);
     }
     return out;
   }
   return out;
 }
+/* 鷹が(lr,lc)に着地した後、隣接に「さらに飛び越えられる駒（1体先が空き）」があるか判定 */
+function takaCanChainFrom(p,lr,lc){
+  const obstacle=(r,c)=>at(r,c)||wallAt(r,c);
+  for(const [dr,dc] of ALL8){
+    const or=lr+dr, oc=lc+dc;            // 隣接の障害物
+    if(!inB(or,oc)||!obstacle(or,oc))continue;
+    const nr=lr+dr*2, nc=lc+dc*2;        // その先の着地マス
+    if(!inB(nr,nc)||obstacle(nr,nc))continue;
+    if(!colorOk(p.owner,p.id,nr,nc))continue;
+    return true;                          // 1つでも再跳躍できる方向があれば行動力+1の対象
+  }
+  return false;
+}
 /* マスに入る処理（罠・透明忍者を解決）戻り値: "ok"|"bounced"|"dead" */
 function enterSquare(p,nr,nc){
   const prevR=p.r,prevC=p.c;
-  // 透明忍者チェック
+  // 透明忍者チェック：透明中の「忍者」のマスに踏み込むと忍者が露見し、踏み込んだ駒が撃破される。
+  // ※隕石（流星群中）は空へ昇っているだけなので、このロジックの対象外（即死させない）。
   const hidden=at(nr,nc);
-  if(hidden && hidden!==p && hidden.flags.invisible && hidden.owner!==p.owner){
+  if(hidden && hidden!==p && hidden.flags.invisible && hidden.type==="ninja" && hidden.owner!==p.owner){
     hidden.flags.invisible=false;
     clearNinjaProb(hidden.id); // 露見したので予測不要
     log(`そこには透明の忍者が潜んでいた！`,"s");
@@ -1694,6 +1702,7 @@ function enterSquare(p,nr,nc){
     sfx("trap");
     log(`${pieceLabel(p)}は罠にかかった！（1ダメ・次のターン行動力-1）`,"s");
     p.flags.apCut=true; // 次のターン開始時に行動力-1
+    p.ap=0;             // 罠にかかったら、その駒はその場で停止（残り行動力を失う）
     dealDamage(p,1,null,"trap");
     if(p.dead)return "dead";
   }
@@ -1789,6 +1798,7 @@ function startPlayerTurn(){
     p.flags.usedFree=false;
     p.flags.bokenWrapUsed=false;
     p.flags.chargeDir=null; p.flags.chargeSteps=0; p.flags.chargeReady=false;
+    p.flags.takaJumped=false;
     if(p.type==="tatehei")p.flags.block=null; // 盾は毎ターン更新（手番開始でリセット）
   }
   UI={mode:"action",sel:null,targets:new Set(),ability:null,extra:{}};
@@ -1954,6 +1964,8 @@ function actorCanStillAct(){
   // 冒険者：1マスでも移動していれば、残り行動力を捨てて通常攻撃へ移行してよい
   // （移動を強制せず、距離を詰めてから攻撃する運用を可能にする）
   if(p.type==="boken" && p.ap<(p.maxAp||2))return false;
+  // 鷹：跳躍で行動済みなら、（連続跳躍で得た）残り行動力を捨てて攻撃へ移行してよい
+  if(p.type==="taka" && p.flags.takaJumped)return false;
   // stepOptions/jumpOptions は「行動力を余らせず確実に消費できる移動」だけを返す。
   // それが1つでもあるなら、まだ行動力を消費する義務が残っている。
   if(stepOptions(p).length>0)return true;
@@ -2374,17 +2386,25 @@ function onCell(r,c){
             const fr=a.r,fc=a.c;
             tryStep(a,r,c);
             if(!a.dead)logMove(a,fr,fc);
+            else if(G.currentActor===a.id)G.currentActor=null; // 行動中の駒が死んだら主体を解除（進行不能を防ぐ）
             processRespawns(()=>render());
             return;
           }
           if(canActHere&&jumps.includes(key)){
             if(!takeActionSlot(a))return;
             const fr=a.r,fc=a.c;
-            if(a.type==="taka"){ a.ap-=1; log("鷹が飛び越えた！","p"); }
-            else { a.ap-=2; log("騎馬が跳躍した！","p"); }
-            enterSquare(a,r,c);
+            if(a.type==="taka"){
+              a.ap-=1;
+              a.flags.takaJumped=true;   // 跳躍で行動済み＝以後は残行動力を捨てて攻撃してもよい
+              enterSquare(a,r,c);
+              // 着地先の隣にさらに飛び越えられる駒があれば行動力+1（その1で再跳躍/移動できる）
+              if(!a.dead && takaCanChainFrom(a,a.r,a.c)){ a.ap+=1; log("鷹が飛び越えた！さらに跳べる（行動力+1）","p"); }
+              else log("鷹が飛び越えた！","p");
+            }
+            else { a.ap-=2; log("騎馬が跳躍した！","p"); enterSquare(a,r,c); }
             sfx("move");
             if(!a.dead)logMove(a,fr,fc);
+            else if(G.currentActor===a.id)G.currentActor=null; // 行動中の駒が死んだら主体を解除
             processRespawns(()=>render());
             return;
           }
@@ -2689,6 +2709,7 @@ function startAITurn(){
     p.flags.usedFree=false;
     p.flags.bokenWrapUsed=false;
     p.flags.chargeDir=null; p.flags.chargeSteps=0; p.flags.chargeReady=false;
+    p.flags.takaJumped=false;
     if(p.type==="tatehei")p.flags.block=null; // 盾は毎ターン更新
   }
   setPhaseBar('<span class="turnE"><span class="spinner"></span>敵軍の手番 — '+(aiLevel==="strong"?"徹底思考中…（つよい・最大20秒）":aiLevel==="normal"?"深く思考中…（ふつう・最大8秒）":"思考中…")+'</span>');
