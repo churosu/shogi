@@ -2621,6 +2621,7 @@ function playerThreatMap(){
   const mark=(r,c,d)=>{if(!inB(r,c))return;const k=r*6+c;if(!map[k]||map[k]<d)map[k]=d;};
   for(const f of alive("P")){
     if(f.flags.invisible)continue; // AIは透明駒を知らない
+    if(f.type==="kemono")continue; // 獣は脅威マップに含めない（倒す価値がなく、逃げる対象にしない）
     const reach=reachSquares(f,f.maxAp,true);
     const dM=atkDamage(f,"melee"),dR=atkDamage(f,"ranged");
     for(const [r,c] of reach){
@@ -2947,6 +2948,13 @@ const PIECE_ROLE={
 };
 /* 役割ごとの「敵へ近づく価値」係数（大きいほど前へ出る） */
 const ROLE_ADVANCE={ sortie:12, assault:16, intercept:4, control:2 };
+// 爆弾からの退避優先度（駒の価値）：高価値ほど強く逃がす
+const SS_PIECE_WORTH={
+  yusha:60, kyuketsuki:45, kiba:42, sogeki:40, kyuhei:38, senshi:40, kenshi:38,
+  souhei:34, fushicho:36, esper:34, jutsushi:30, majo:30, akuryo:28, seishoku:30,
+  gunshi:24, miko:24, chokyo:22, kusushi:26, wanashi:24, bakudan:26, ninja:30,
+  jusoshi:26, boken:28, tatehei:26, kemono:6
+};
 
 /* プレイヤー駒 f が次の手番に「移動→通常攻撃」で与えうる最大脅威を点数化。
    AI駒を撃破できるなら特大、ダメージのみなら中程度。悪霊の標的選定に使う。 */
@@ -3177,7 +3185,7 @@ const SS={ // 静的データ（全24種対応）
 const SS_MAXAP={kiba:2,ninja:2,boken:2};
 function ssClone(st){
   return {
-    side:st.side, kP:st.kP, kE:st.kE, trapProb:st.trapProb, ninjaProb:st.ninjaProb, walls:st.walls,
+    side:st.side, kP:st.kP, kE:st.kE, trapProb:st.trapProb, ninjaProb:st.ninjaProb, walls:st.walls, bombs:st.bombs,
     ps:st.ps.map(p=>({id:p.id,t:p.t,o:p.o,r:p.r,c:p.c,hp:p.hp,
       block:p.block?{r:p.block.r,c:p.block.c}:null,phoenix:p.phoenix,maxAp:p.maxAp,heroBoost:p.heroBoost,invis:p.invis}))
   };
@@ -3202,7 +3210,7 @@ function ssFromGame(side){
   if(hiddenFoeNinja && G.ninjaProb){
     for(const e of G.ninjaProb)for(const cl of e.cells)ninjaProb.push({r:cl.r,c:cl.c,prob:cl.prob});
   }
-  return {side, kP:G.kills.P, kE:G.kills.E, ps, trapProb, ninjaProb, walls:(G.walls||[]).map(w=>({r:w.r,c:w.c}))};
+  return {side, kP:G.kills.P, kE:G.kills.E, ps, trapProb, ninjaProb, walls:(G.walls||[]).map(w=>({r:w.r,c:w.c})), bombs:(G.bombs||[]).map(b=>({r:b.r,c:b.c,owner:b.owner,fuse:b.fuse}))};
 }
 const ssAt=(st,r,c)=>st.ps.find(p=>p.r===r&&p.c===c);
 function ssMoveDirs(t){ return (t==="kiba"||t==="ninja"||t==="kaizoku"||t==="taka")?ALL8:ORTHO; }
@@ -3488,23 +3496,16 @@ function ssEval(st){
   const beasts=pP.filter(p=>p.t==="kemono");
   if(beasts.length){
     const tamers=pP.filter(p=>p.t==="chokyo");
-    // 攻撃できる駒（特に強襲）は、獣を避けずに調教師本体へ寄せる。
-    // 獣を倒しても勝ち点にならず即再召喚されるため、親（調教師）を討つのが本筋。
+    // 獣は「逃げる対象」ではない。倒しても勝ち点にならず即再召喚されるため、
+    // 獣を避けるのではなく、親（調教師）を討つことを狙う。全ての攻撃駒が調教師へ寄る。
     const attackerTypes=new Set(["kenshi","senshi","kiba","souhei","kyuketsuki","ninja","boken","yusha","fushicho","kusushi"]);
-    for(const e of eP){
-      if(SS.noNormal.has(e.t)){
-        // 通常攻撃を持たない脆い後衛だけは獣に近づきすぎない
-        const db=dist(e,beasts);
-        if(db<=2)v-=(3-db)*14;
-        continue;
-      }
-      if(tamers.length){
-        // 攻撃駒は調教師へ寄せる（獣は素通り／蹴散らしてよい）。強く引き寄せる。
+    if(tamers.length){
+      for(const e of eP){
+        if(SS.noNormal.has(e.t))continue;     // 攻撃できない後衛は寄せない（が、逃げもしない）
         const dt=dist(e,tamers);
-        const pull = attackerTypes.has(e.t)?16:9; // 強襲・近接は特に強く親へ向かう
+        const pull = attackerTypes.has(e.t)?18:10; // 強襲・近接は特に強く親へ向かう
         v-=dt*pull;
-        // 調教師に隣接＝討ち取り目前なら大きく加点
-        if(dt===1)v+=50;
+        if(dt===1)v+=55;                       // 調教師に隣接＝討ち取り目前
       }
     }
   }
@@ -3829,6 +3830,33 @@ function ssEval(st){
   }
 
 
+
+  // === 設置済みの爆弾：爆心＋周囲8マス(3×3)へ1.5ダメージ。爆風圏のE駒は逃がすことを優先する。 ===
+  // ただし、その場に留まることで勝ち点（敵主力の撃破）を取れるなら、そちらを優先してよい。
+  if(st.bombs&&st.bombs.length){
+    for(const b of st.bombs){
+      if(b.owner!=="P")continue;              // プレイヤーが設置した爆弾＝E駒に危険
+      for(const e of eP){
+        const cheb=Math.max(Math.abs(e.r-b.r),Math.abs(e.c-b.c));
+        if(cheb>1)continue;                    // 3×3の爆風圏内か
+        // 駒の価値に応じて退避を優先（価値の高い駒ほど強く逃がす）
+        const worth=SS_PIECE_WORTH[e.t]||10;
+        let penalty = worth;                   // 爆風圏に留まる基本ペナルティ
+        if(e.hp<=1.5)penalty += 40;            // 1.5ダメで落ちる駒は決定的に逃がす
+        // その場に留まると敵主力を討ち取れる（勝ち点）なら、退避ペナルティを相殺
+        let securesKill=false;
+        if(!SS.noNormal.has(e.t)){
+          const dmg=ssAtk({t:e.t,heroBoost:e.heroBoost},"melee")||1;
+          for(const f of pP){
+            if(f.t==="kemono")continue;        // 獣撃破は勝ち点にならない
+            if(Math.abs(e.r-f.r)+Math.abs(e.c-f.c)===1 && f.hp-dmg<=0){ securesKill=true; break; }
+          }
+        }
+        if(securesKill)continue;               // 勝ち点が取れるならその場に留まってよい（ペナルティなし）
+        v-= penalty;
+      }
+    }
+  }
 
   // === 爆弾魔：次に隣接マスへ爆弾を置かれると、自分手番終了時に3×3へ1.5ダメージ ===
   // 爆風が届く範囲(爆弾魔の周囲2マス圏=設置マス＋その8近傍)に居るE駒について、
