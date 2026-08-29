@@ -331,10 +331,11 @@ const PIECES = {
   // ===== 仮追加の駒（対人戦のみ・CPU未実装）=====
   inoshishi: {name:"猪",    k:"猪", ap:2, pvpOnly:true, desc:"通常攻撃0.5ダメ。直進で2マス移動した直後の通常攻撃は2ダメ（途中で方向転換すると不発）"},
   kaizoku:   {name:"海賊",  k:"賊", ap:1, pvpOnly:true, desc:"周囲8マスへ移動可。通常攻撃対象が自分よりHPが高い時（同数不可）、与ダメ+1（合計2）"},
-  renkin:    {name:"錬金術師",k:"錬", ap:1, pvpOnly:true, desc:"行動力1＋HP0.5：隣接する空きマスに壁を設置（どの駒も入れない）。透明忍者がいるマスに置くとその忍者を撃破"},
+  renkin:    {name:"錬金術師",k:"錬", ap:1, pvpOnly:true, desc:"行動力0（毎ターン1回）＋HP0.5：周囲8マスの空きマスに壁を設置（どの駒も入れない・5ターンで消滅）。透明忍者がいるマスに置くとその忍者を撃破"},
   kyojin:    {name:"巨人",  k:"巨", ap:1, pvpOnly:true, maxHp:4, desc:"基礎HP・最大HPが4。通常攻撃可"},
   taka:      {name:"鷹",    k:"鷹", ap:1, pvpOnly:true, desc:"常時8方向へ移動可。行動力1消費で、駒や壁を1体飛び越えてすぐ先の空きマスに着地。着地の先にさらに飛び越えられる駒（壁）があれば、行動力を消費せず連続で飛び越えられる。通常攻撃可"},
   inseki:    {name:"隕石",  k:"隕", ap:1, pvpOnly:true, noNormal:true, desc:"通常攻撃不可。スキル「流星群」：行動力を全消費して発動、その場から消え、次の自分ターン開始時に5×5の四隅と中心線の8箇所から1つを選んで着弾（そのマスへ移動）。着弾マスの駒を撃破、周囲十字4マスに0.5ダメージ。反動は周囲に当てた時1・当てなかった時0.5"},
+  uchujin:   {name:"宇宙人",k:"宙", ap:1, pvpOnly:true, desc:"スキル「転移」（行動力1＋HP0.5）：縦1列を選び、上か下を選んでその列の駒全てをその方向へ1マス移動させる（端・壁・塞がれている駒は動かない）。通常攻撃可"},
 };
 const PICKABLE = Object.keys(PIECES).filter(t=>t!=="kemono" && !PIECES[t].pvpOnly); // CPUや通常選出は仮駒を除外
 const PVP_PIECES = Object.keys(PIECES).filter(t=>PIECES[t].pvpOnly);                 // 対人戦のみ選べる仮駒
@@ -439,7 +440,7 @@ const wallAt=(r,c)=>G.walls&&G.walls.some(w=>w.r===r&&w.c===c); // 錬金術師�
 /* ターンエンドごとに壁の寿命を1減らし、0になった壁を破壊する（3回のターンエンドで消滅） */
 function decayWalls(){
   if(!G.walls||!G.walls.length)return;
-  for(const w of G.walls)w.life=(w.life==null?3:w.life)-1;
+  for(const w of G.walls)w.life=(w.life==null?5:w.life)-1;
   const before=G.walls.length;
   G.walls=G.walls.filter(w=>w.life>0);
   if(G.walls.length<before)log("錬金術師の壁が崩れ去った","s");
@@ -819,7 +820,7 @@ function netSerialize(){
   return {
     pieces:G.pieces.map(p=>({id:p.id,type:p.type,owner:p.owner,r:p.r,c:p.c,
       hp:p.hp,ap:p.ap,maxAp:p.maxAp,dead:p.dead,flags:p.flags})),
-    traps:G.traps,bombs:G.bombs,walls:(G.walls||[]).map(w=>({r:w.r,c:w.c,life:w.life})),meteors:(G.meteors||[]).map(m=>({id:m.id,owner:m.owner,cells:m.cells,fuse:m.fuse,launchedThisTurn:m.launchedThisTurn})),kills:G.kills,setupCount:G.setupCount,
+    traps:G.traps,bombs:G.bombs,walls:(G.walls||[]).map(w=>({r:w.r,c:w.c,life:w.life})),meteors:(G.meteors||[]).map(m=>({id:m.id,owner:m.owner,cells:m.cells,fuse:m.fuse})),kills:G.kills,setupCount:G.setupCount,
     phase:G.phase,turn:G.turn,nphase:G.nphase,
     respawnQueue:G.respawnQueue,over:G.over
   };
@@ -841,7 +842,7 @@ function applyState(S){
   G.traps=S.traps.map(t=>({owner:opp(t.owner),r:5-t.r,c:t.c}));
   G.bombs=S.bombs.map(b=>({owner:opp(b.owner),r:5-b.r,c:b.c,fuse:b.fuse}));
   G.walls=(S.walls||[]).map(w=>({r:5-w.r,c:w.c,life:w.life}));
-  G.meteors=(S.meteors||[]).map(m=>({id:m.id,owner:opp(m.owner),cells:m.cells.map(cc=>({r:5-cc.r,c:cc.c})),fuse:m.fuse,launchedThisTurn:m.launchedThisTurn}));
+  G.meteors=(S.meteors||[]).map(m=>({id:m.id,owner:opp(m.owner),cells:m.cells.map(cc=>({r:5-cc.r,c:cc.c})),fuse:m.fuse}));
   G.kills={P:S.kills.E,E:S.kills.P};
   G.setupCount={P:S.setupCount.E,E:S.setupCount.P};
   G.phase=S.phase;G.turn=opp(S.turn);G.nphase=S.nphase;
@@ -1207,9 +1208,13 @@ function resolveMeteorImpact(meteorId, ir, ic){
   log(`☄ 隕石が ${cellName(ir,ic)} に着弾！`,p&&p.owner==="P"?"p":"e");
   sfx("bomb");
   spawnShatterAt(ir,ic,p?p.owner:"P");
-  // ① 着弾マスにいる駒は撃破（隕石本体を除く）
+  // ① 着弾マスにいる駒は撃破（隕石本体を除く）。
+  //    隕石はそのマスへ移動するので、不死鳥であっても即kill（灰から蘇らせない）。重なりを防ぐ。
   const direct=at(ir,ic);
-  if(direct && direct.id!==meteorId){ killPiece(direct,p,"meteor"); }
+  if(direct && direct.id!==meteorId){
+    if(direct.type==="fushicho")direct.flags.phoenix=true; // 蘇生を使い切った扱いにして即撃破
+    killPiece(direct,p,"meteor");
+  }
   // ② 隕石駒を着弾マスへ移動させ、消えていた状態を解除する
   if(p){
     p.flags.pendingMeteor=false;
@@ -1218,15 +1223,14 @@ function resolveMeteorImpact(meteorId, ir, ic){
     p.r=ir; p.c=ic;               // 着弾マスへ移動
   }
   // ③ 着弾マスの周囲十字4マスに0.5ダメージ
-  let hitAround=false; // 周辺（十字）に1体でもダメージを与えたか
   for(const [dr,dc] of ORTHO){
     const r=ir+dr,c=ic+dc;
     if(!inB(r,c))continue;
     const t=at(r,c);
-    if(t && t.id!==meteorId){ dealDamage(t,0.5,p,"meteor"); hitAround=true; }
+    if(t && t.id!==meteorId){ dealDamage(t,0.5,p,"meteor"); }
   }
-  // ④ 隕石駒自身への反動：周辺に巻き込みがあれば1、無ければ0.5
-  if(p && !p.dead){ dealDamage(p, hitAround?1:0.5, null,"meteor"); }
+  // ④ 隕石駒自身への反動は常に0.5（周辺への巻き込みの有無で変動しない）
+  if(p && !p.dead){ dealDamage(p, 0.5, null,"meteor"); }
 }
 function killPiece(p,src,kind){
   if(p.type==="fushicho" && !p.flags.phoenix){
@@ -1746,6 +1750,39 @@ function atkDamage(p,kind,target){
   if(p.type==="kaizoku" && kind==="melee" && target && target.hp>p.hp)d+=1;
   return d;
 }
+/* 宇宙人の転移：列colの駒を dir 方向(-1=上/+1=下)へ「1マスだけ」移動させる。
+   端に到達している駒・進行先が壁の駒・進行先が動けない駒で塞がれている駒は動かない。
+   先頭（進行方向側）の駒から順に判定し、空いた／空く予定のマスへ1マス詰める。 */
+function warpColumn(col, dir){
+  const wallAtCell=(r)=>(G.walls||[]).some(w=>w.r===r&&w.c===col);
+  // 進行方向の先頭から順に処理する行の並び
+  const rowsInOrder = dir<0 ? [0,1,2,3,4,5] : [5,4,3,2,1,0];
+  // このターンの移動後にそのマスが埋まるか（移動先の衝突判定に使う）
+  const willOccupy=new Set();
+  // まず現在駒がいるマスを記録（動かない駒はそのまま埋まり続ける）
+  const moves=[]; // {p, nr}
+  const stayed=new Set(); // 動かないと確定した行
+  for(const r of rowsInOrder){
+    const p=at(r,col);
+    if(!p)continue;
+    const nr=r+dir;
+    // 端・盤外・壁・「動かないと確定した駒」で塞がれていれば移動不可
+    if(nr<0||nr>5 || wallAtCell(nr) || stayed.has(nr)){
+      stayed.add(r);
+      continue;
+    }
+    // 進行先(nr)にいる駒は、先に処理済みで既に動いた（stayedに無い）なら空く
+    const ahead=at(nr,col);
+    if(ahead && !moves.some(m=>m.p===ahead)){
+      // 進行先の駒がまだ動いていない＝塞がれている
+      stayed.add(r);
+      continue;
+    }
+    moves.push({p, nr});
+  }
+  // 実際に移動を適用（先頭から順に処理済みなので衝突しない）
+  for(const m of moves){ m.p.r=m.nr; m.p.c=col; }
+}
 function normalAttackCells(p){
   if(PIECES[p.type].noNormal)return [];
   if(p.flags.invisible)return []; // 忍者：透明中は通常攻撃不可
@@ -1867,29 +1904,19 @@ function shieldPhase(owner,cont){
 }
 function finishPlayerTurn(){
   if(G.over)return;
-  // 隕石の着弾：自分のターンエンドごとに全隕石のfuseを1減らす。0以下になったものが着弾する。
+  // 隕石の着弾：爆弾と同じタイミング。自分のターンエンドに fuse<=0 のものが着弾し、
+  // それ以外は fuse を1減らす（＝設置の次の自分のターンエンドで着弾）。
+  let readyMeteor=null;
   if(G.meteors&&G.meteors.length){
     for(const m of G.meteors){
       if(m.owner!=="P")continue;
-      if(m.launchedThisTurn){ m.launchedThisTurn=false; continue; } // 発動したターンのエンドでは減らさない
-      m.fuse=(m.fuse==null?1:m.fuse)-1;
+      if((m.fuse==null?0:m.fuse)<=0){ if(!readyMeteor)readyMeteor=m; }
+      else m.fuse--;
     }
   }
-  const readyMeteor=(G.meteors||[]).find(m=>m.owner==="P" && (m.fuse!=null && m.fuse<=0));
   if(readyMeteor){
     const cells=readyMeteor.cells.filter(c=>inB(c.r,c.c));
-    if(NET.on){
-      // オンラインでは操作の同期を避けるため、着弾地点を自動選択（最も敵駒を巻き込める候補）
-      let best=cells[0], bestScore=-1;
-      for(const c of cells){
-        let s=0; const d=at(c.r,c.c); if(d&&d.owner==="E")s+=3;
-        for(const [dr,dc] of ORTHO){const t=at(c.r+dr,c.c+dc); if(t&&t.owner==="E")s++;}
-        if(s>bestScore){bestScore=s;best=c;}
-      }
-      resolveMeteorImpact(readyMeteor.id,best.r,best.c);
-      processRespawns(()=>{ if(!G.over)finishPlayerTurnCore(); });
-      return;
-    }
+    // 着弾地点は必ず手動で選択する（オンライン・CPU戦とも）。
     UI={mode:"meteorTargetEnd",sel:null,targets:new Set(cells.map(c=>c.r+","+c.c)),ability:{meteorId:readyMeteor.id},extra:{}};
     setPhaseBar('<span class="turnP">☄ 流星群が着弾します — 着弾地点を選択してください（赤いマス）</span>');
     render();
@@ -1901,7 +1928,7 @@ function finishPlayerTurnCore(){
   if(G.over)return;
   explodeBombs("P",()=>{
     if(G.over)return;
-    decayWalls(); // 壁は3回のターンエンドで消滅
+    decayWalls(); // 壁は5回のターンエンドで消滅
     // 相手（E）所有の透明解除：Pの手番終了で解除されるのはE忍者
     for(const p of alive("E"))p.flags.invisible=false;
     for(const p of alive("P")){p.flags.noAttack=false;p.flags.slowedVisual=false;p.flags.mikoBuff=false;}
@@ -2031,8 +2058,8 @@ function abilityButtons(p){
         UI.targets=new Set(cells.map(t=>t.join(",")));render();
       });break;}
     case "renkin":{
-      // 隣接する空きマス（透明忍者を除く他の駒が居ないマス・壁も不可）に壁を設置
-      const cells=ORTHO.map(([dr,dc])=>[p.r+dr,p.c+dc])
+      // 周囲8マスの空きマス（透明忍者を除く他の駒が居ないマス・壁も不可）に壁を設置
+      const cells=ALL8.map(([dr,dc])=>[p.r+dr,p.c+dc])
         .filter(([r,c])=>{
           if(!inB(r,c)||wallAt(r,c))return false;
           const occ=at(r,c);
@@ -2040,7 +2067,7 @@ function abilityButtons(p){
           if(occ.flags.invisible&&occ.type==="ninja")return true; // 透明忍者がいるマスは設置可（撃破）
           return false;                              // それ以外の駒がいるマスは不可
         });
-      A("壁の錬成（行1・HP0.5）",canAct&&p.ap>=1&&p.hp>0.5&&cells.length>0,()=>{
+      A("壁の錬成（行0・毎ターン1回・HP0.5）",canAct&&!p.flags.usedFree&&p.hp>0.5&&cells.length>0,()=>{
         UI.mode="ability";UI.ability={type:"wall",piece:p};
         UI.targets=new Set(cells.map(t=>t.join(",")));render();
       });break;}
@@ -2062,12 +2089,23 @@ function abilityButtons(p){
         p.flags.pendingMeteor=true;
         p.flags.invisible=true;            // その場から消える（被弾もしない）
         p.flags.meteorOrigin={r:p.r,c:p.c};
-        // 着弾候補8箇所（盤内）を記録。fuse=着弾までの自分のターンエンド回数（次の次＝2）
+        // 着弾候補8箇所（盤内）を記録。fuse=1（爆弾と同じ：次の自分のターンエンドで着弾）
         if(!G.meteors)G.meteors=[];
         G.meteors=G.meteors.filter(m=>m.id!==p.id);
-        G.meteors.push({id:p.id,owner:p.owner,cells:cells.map(([r,c])=>({r,c})),fuse:2,launchedThisTurn:true});
-        log("流星群を呼んだ…次の次の自分のターンエンド時に着弾する","p");
+        G.meteors.push({id:p.id,owner:p.owner,cells:cells.map(([r,c])=>({r,c})),fuse:1});
+        log("流星群を呼んだ…次の自分のターンエンド時に着弾する","p");
         sfx("teleport");render();
+      });break;}
+    case "uchujin":{
+      // 転移：縦1列を選び、上か下に列の駒を寄せる（行動力1＋HP0.5）
+      // まず列を選択させる（盤面のどのマスをタップしてもその列が対象）。
+      A("転移（行1・HP0.5）",canAct&&p.ap>=1&&p.hp>0.5,()=>{
+        UI.mode="ability";UI.ability={type:"warpCol",piece:p};
+        const cells=[];
+        for(let r=0;r<6;r++)for(let c=0;c<6;c++)cells.push(r+","+c);
+        UI.targets=new Set(cells);
+        setPhaseBar('<span class="turnP">転移：寄せたい縦1列をタップで選択</span>');
+        render();
       });break;}
     case "kusushi":{
       const ts=ORTHO.map(([dr,dc])=>at(p.r+dr,p.c+dc)).filter(t=>t);
@@ -2113,7 +2151,8 @@ function abilityButtons(p){
         p.ap=0;log("呪詛師はその場で待機した","p");render();
       });break;}
     case "miko":{
-      const ts=alive("P").filter(t=>t.id!==p.id);
+      // 神楽は巫女以外の味方が対象（巫女に巫女の能力は使えない）
+      const ts=alive("P").filter(t=>t.id!==p.id && t.type!=="miko");
       A("神楽：味方+1行動（行1＋HP0.5）",canAct&&p.ap>=1&&p.hp>0.5&&ts.length>0,()=>{
         UI.mode="ability";UI.ability={type:"kagura",piece:p};
         UI.targets=new Set(ts.map(t=>t.r+","+t.c));render();
@@ -2174,7 +2213,16 @@ function resolveAbilityClick(r,c){
       p.ap--;
       performAttack(p,t,"ranged");
       clearAbility();
-      processRespawns(()=>render());
+      // 遠距離攻撃で敵を倒すと相手の召喚処理が入る。その後に手番が進まなくなる不具合を防ぐため、
+      // 弓兵・狙撃手（通常攻撃を持たない）は行動力を使い切ったら攻撃フェーズへ自動で進める。
+      processRespawns(()=>{
+        if(G.over)return;
+        if(G.turn==="P" && G.phase==="action" && !actorCanStillAct() && PIECES[p.type].noNormal){
+          gotoAttackPhase();
+        }else{
+          render();
+        }
+      });
       return;}
     case "slow":{
       if(!takeActionSlot(p))break;
@@ -2205,7 +2253,7 @@ function resolveAbilityClick(r,c){
       break;}
     case "wall":{
       if(!takeActionSlot(p))break;
-      p.ap--; p.hp=r2(p.hp-0.5);
+      p.flags.usedFree=true; p.hp=r2(p.hp-0.5);   // 行動力は消費しない（毎ターン1回・HP0.5）
       // そのマスに透明忍者がいれば撃破してから壁を設置
       const occ=at(r,c);
       if(occ&&occ.flags.invisible&&occ.type==="ninja"){
@@ -2216,9 +2264,30 @@ function resolveAbilityClick(r,c){
       if(!G.walls)G.walls=[];
       // 壁は盤面に1つまで（誰が作ったかに関わらず）。既存の壁は置き換える。
       G.walls=[];
-      // 3回のターンエンドを経過すると破壊される（life=3）
-      G.walls.push({r,c,life:3});
-      log("錬金術師が壁を錬成した（3ターンで消滅）","p",true);sfx("place");
+      // 5回のターンエンドを経過すると破壊される（life=5）
+      G.walls.push({r,c,life:5});
+      log("錬金術師が壁を錬成した（5ターンで消滅）","p",true);sfx("place");
+      clearAbility();
+      processRespawns(()=>render());
+      return;}
+    case "warpCol":{
+      // 列を選択→方向（上/下）選択へ。選んだ列の上端(0行)と下端(5行)をハイライトし、
+      // 上端タップ=上へ寄せる／下端タップ=下へ寄せる。
+      const col=c;
+      UI.mode="ability";UI.ability={type:"warpDir",piece:p,col};
+      UI.targets=new Set(["0,"+col, "5,"+col]);
+      setPhaseBar('<span class="turnP">転移：上へ寄せる（最上段）か下へ寄せる（最下段）かをタップ</span>');
+      render();
+      return;}
+    case "warpDir":{
+      const col=ab.col;
+      if(c!==col){ clearAbility();render();return; } // 別列は無視してキャンセル
+      const dir = (r===0) ? -1 : 1;   // 最上段=上へ(-1)、最下段=下へ(+1)
+      if(!takeActionSlot(p))break;
+      p.ap--; p.hp=r2(p.hp-0.5);
+      warpColumn(col, dir);
+      log(`宇宙人が${col+1}列目を${dir<0?"上":"下"}へ転移させた（HP-0.5）`,"p",true);
+      sfx("teleport");
       clearAbility();
       processRespawns(()=>render());
       return;}
@@ -4783,7 +4852,7 @@ function finishAITurn(){
   shieldPhase("E",()=>{
     explodeBombs("E",()=>{
       if(G.over)return;
-      decayWalls(); // 壁は3回のターンエンドで消滅
+      decayWalls(); // 壁は5回のターンエンドで消滅
       for(const p of alive("P")){ if(p.flags.invisible)clearNinjaProb(p.id); p.flags.invisible=false; }
       for(const p of alive("E")){p.flags.noAttack=false;p.flags.slowedVisual=false;p.flags.mikoBuff=false;}
       setTimeout(startPlayerTurn,400);
