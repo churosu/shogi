@@ -78,6 +78,8 @@ h1 small{font-size:11px;letter-spacing:.15em;color:var(--sub);display:block;marg
 .mk-trap{background:#b23a1a;color:#fff;text-shadow:0 0 2px rgba(0,0,0,.6)}
 .mk-bomb{background:#222;color:#ffcf3f}
 .wallCell{background:repeating-linear-gradient(45deg,#6b5636,#6b5636 6px,#5a4830 6px,#5a4830 12px)!important;box-shadow:inset 0 0 0 2px #3a2f1c}
+.terrP{box-shadow:inset 0 0 0 3px rgba(80,200,120,.9)!important}
+.terrE{box-shadow:inset 0 0 0 3px rgba(230,120,90,.9)!important}
 .wallLife{position:absolute;bottom:2px;left:50%;transform:translateX(-50%);display:flex;gap:2px;z-index:3}
 .wallLife i{width:5px;height:5px;border-radius:1px;background:#3b82f6;box-shadow:0 0 2px rgba(59,130,246,.8);display:block}
 .meteorFuse{position:absolute;top:2px;left:50%;transform:translateX(-50%);display:flex;gap:2px;z-index:4}
@@ -323,22 +325,23 @@ const PIECES = {
   kyuketsuki:{name:"吸血鬼",k:"吸", ap:1, desc:"通常攻撃でダメージを与えるたび、HPを0.5回復する"},
   sogeki:    {name:"狙撃手",k:"狙", ap:1, noNormal:true, desc:"行動力1：斜め3マスまでの遠距離攻撃。通常攻撃不可"},
   seishoku:  {name:"聖職者",k:"聖", ap:1, desc:"死亡時、味方全てに1ダメージ。1度だけ行動力1で味方全体のHP+0.5"},
-  majo:      {name:"魔女",  k:"魔", ap:1, noNormal:true, desc:"行動力1：味方同士、または敵同士の位置を入れ替える。通常攻撃不可"},
+  majo:      {name:"魔女",  k:"魔", ap:1, noNormal:true, desc:"行動力1＋HP0.5：味方同士、または敵同士の位置を入れ替える。通常攻撃不可"},
   bakudan:   {name:"爆弾魔",k:"爆", ap:1, desc:"行動力1：隣接マスに爆弾設置。次の自分手番終了時に爆発し爆心＋周囲8マス(3×3)へ1.5ダメ。自分の駒も巻き込むので注意。通常攻撃可"},
   yusha:     {name:"勇者",  k:"勇", ap:1, desc:"召喚時、敵1体を密かに「魔王」に指定。魔王が場を去ると近接攻撃3・HP1回復"},
   akuryo:    {name:"悪霊",  k:"霊", ap:1, desc:"行動力0：敵1体は次の手番、通常攻撃ができない（毎ターン1回）。移動と併用可"},
   kemono:    {name:"獣",    k:"獣", ap:1, beast:true, desc:"調教師の効果でのみ召喚される（HP1）"},
   // ===== 仮追加の駒（対人戦のみ・CPU未実装）=====
-  inoshishi: {name:"猪",    k:"猪", ap:2, pvpOnly:true, desc:"通常攻撃0.5ダメ。直進で2マス移動した直後の通常攻撃は2ダメ（途中で方向転換すると不発）"},
-  kaizoku:   {name:"海賊",  k:"賊", ap:1, pvpOnly:true, desc:"周囲8マスへ移動可。通常攻撃対象が自分よりHPが高い時（同数不可）、与ダメ+1（合計2）"},
-  renkin:    {name:"錬金術師",k:"錬", ap:1, pvpOnly:true, desc:"行動力0（毎ターン1回）＋HP0.5：周囲8マスの空きマスに壁を設置（どの駒も入れない・5ターンで消滅）。透明忍者がいるマスに置くとその忍者を撃破"},
-  kyojin:    {name:"巨人",  k:"巨", ap:1, pvpOnly:true, maxHp:4, desc:"基礎HP・最大HPが4。通常攻撃可"},
-  taka:      {name:"鷹",    k:"鷹", ap:1, pvpOnly:true, desc:"常時8方向へ移動可。行動力1消費で、駒や壁を1体飛び越えてすぐ先の空きマスに着地。着地の先にさらに飛び越えられる駒（壁）があれば、行動力を消費せず連続で飛び越えられる。通常攻撃可"},
-  inseki:    {name:"隕石",  k:"隕", ap:1, pvpOnly:true, noNormal:true, desc:"通常攻撃不可。スキル「流星群」：行動力を全消費して発動、その場から消え、次の自分ターン開始時に5×5の四隅と中心線の8箇所から1つを選んで着弾（そのマスへ移動）。着弾マスの駒を撃破、周囲十字4マスに0.5ダメージ。反動は周囲に当てた時1・当てなかった時0.5"},
-  uchujin:   {name:"宇宙人",k:"宙", ap:1, pvpOnly:true, desc:"スキル「転移」（行動力1＋HP0.5）：縦1列を選び、上か下を選んでその列の駒全てをその方向へ1マス移動させる（端・壁・塞がれている駒は動かない）。通常攻撃可"},
+  inoshishi: {name:"猪",    k:"猪", ap:2, desc:"通常攻撃0.5ダメ。直進で2マス移動した直後の通常攻撃は2ダメ（途中で方向転換すると不発）"},
+  kaizoku:   {name:"海賊",  k:"賊", ap:1, desc:"周囲8マスへ移動可。通常攻撃対象が自分よりHPが高い時（同数不可）、与ダメ+1（合計2）"},
+  taka:      {name:"鷹",    k:"鷹", ap:1, desc:"常時8方向へ移動可。行動力1消費で、駒や壁を1体飛び越えてすぐ先の空きマスに着地。着地の先にさらに飛び越えられる駒（壁）があれば、行動力を消費せず連続で飛び越えられる。通常攻撃可"},
+  inseki:    {name:"隕石",  k:"隕", ap:1, noNormal:true, desc:"通常攻撃不可。スキル「流星群」：行動力を全消費して発動、その場から消え、次の自分ターン開始時に5×5の四隅と中心線の8箇所から1つを選んで着弾（そのマスへ移動）。着弾マスの駒を撃破、周囲十字4マスに0.5ダメージ。反動は周囲に当てた時1・当てなかった時0.5"},
+  uchujin:   {name:"宇宙人",k:"宙", ap:1, desc:"スキル「転移」（行動力1＋HP0.5）：縦1列を選び、上か下を選んでその列の駒全てをその方向へ1マス移動させる（端・壁・塞がれている駒は動かない）。通常攻撃可"},
+  ryoushu:   {name:"領主",  k:"領", ap:1, desc:"スキル「領地化」（行動力1）：周囲8マスの1つを自分の領地にする（自軍で最大1つ）。自分の領地には自分の駒しか入れない。通常攻撃可"},
+  sagishi:   {name:"詐欺師",k:"詐", ap:1, desc:"召喚時に駒を1つ選び、相手にはその駒として表示される（偽装）。実際の能力は詐欺師。自分は詐欺師をタップで偽装先を確認できる。通常攻撃可"},
+  kitsune:   {name:"狐",    k:"狐", ap:1, desc:"自分のターン開始時、1マス後ろ（自陣側）にいる味方駒の能力・特性を獲得し、そのターン終了まで保持する（移動後も継承を保つ）。通常攻撃可"},
 };
-const PICKABLE = Object.keys(PIECES).filter(t=>t!=="kemono" && !PIECES[t].pvpOnly); // CPUや通常選出は仮駒を除外
-const PVP_PIECES = Object.keys(PIECES).filter(t=>PIECES[t].pvpOnly);                 // 対人戦のみ選べる仮駒
+const PICKABLE = Object.keys(PIECES).filter(t=>t!=="kemono" && !PIECES[t].pvpOnly); // 獣以外の全駒（プレイヤー・CPU選出の母集団）
+const PVP_PIECES = Object.keys(PIECES).filter(t=>PIECES[t].pvpOnly);                 // （現在は空。旧・対人戦専用の仮駒）
 const ORTHO=[[1,0],[-1,0],[0,1],[0,-1]];
 const DIAG=[[1,1],[1,-1],[-1,1],[-1,-1]];
 const ALL8=[...ORTHO,...DIAG];
@@ -362,7 +365,7 @@ function newGame(){
     phase:"setup", turn:"P",
     setupCount:{P:0,E:0},
     slotsLeft:1, currentActor:null, attackUsed:false,
-    respawnQueue:[], over:false, trapProb:[], ninjaProb:[], walls:[], meteors:[],
+    respawnQueue:[], over:false, trapProb:[], ninjaProb:[], walls:[], meteors:[], territories:[],
     aiTypes:aiPickComposition(),
   };
   UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
@@ -434,9 +437,13 @@ function isPlayerMaou(target){
   }
   return false;
 }
-const mains=o=>alive(o).filter(p=>p.type!=="kemono");
+const mains=o=>alive(o).filter(p=>p.type!=="kemono" && !p.flags.pendingMeteor);
 const at=(r,c)=>G.pieces.find(p=>!p.dead&&p.r===r&&p.c===c);
 const wallAt=(r,c)=>G.walls&&G.walls.some(w=>w.r===r&&w.c===c); // 錬金術師の壁があるマスか
+// 領主の領地：そのマスの領地の所有者を返す（無ければnull）。相手はそのマスに入れない。
+const territoryOwnerAt=(r,c)=>{ const t=(G.territories||[]).find(x=>x.r===r&&x.c===c); return t?t.owner:null; };
+// pがそのマスに入れるか（相手の領地には入れない。自分の領地・領地なしは入れる）
+const territoryBlocks=(owner,r,c)=>{ const o=territoryOwnerAt(r,c); return o!==null && o!==owner; };
 /* ターンエンドごとに壁の寿命を1減らし、0になった壁を破壊する（3回のターンエンドで消滅） */
 function decayWalls(){
   if(!G.walls||!G.walls.length)return;
@@ -452,10 +459,32 @@ function visAt(r,c,forOwner){ // 駒があるか（forOwnerの視点。敵の透
   return p;
 }
 function frontDr(owner){return owner==="P"?-1:1;}
+/* 狐の「後ろの駒」（自陣側の隣接駒）を実際の盤面から取得。ターン開始時の獲得判定に使う。 */
+function foxBehindPieceRaw(p){
+  if(!p||p.type!=="kitsune")return null;
+  const br=p.r - frontDr(p.owner); // 後ろ＝前方向の逆
+  const bc=p.c;
+  const b=at(br,bc);
+  if(b && !b.dead && b.owner===p.owner && b.type!=="kitsune") return b;
+  return null;
+}
+/* 狐の「実効タイプ」：ターン開始時に獲得した能力(foxCopy)を用いる。
+   これにより移動後も同じ能力を保持する。獲得していなければ狐自身。 */
+function foxEffType(p){
+  return (p.type==="kitsune" && p.flags.foxCopy) ? p.flags.foxCopy : (p.type==="kitsune" ? "kitsune" : p.type);
+}
+/* 後方互換：現在の後ろの駒（情報表示などで参照する場合） */
+function foxBehindPiece(p){ return foxBehindPieceRaw(p); }
 function colorOk(owner, moveId, nr, nc){
   // moveId の駒が (nr,nc) に居ると仮定して、主力3駒が同色陣に揃わないか
   const ms=mains(owner);
   if(ms.length<3) return true;
+  // 既に全主力が同じ色陣に居る場合は、この制約で移動を縛らない
+  //（さもないと一方向にしか動けず詰む。まず自由に散開できるようにする）
+  let curH=null, curSame=true;
+  for(const p of ms){ if(curH===null)curH=half(p.c); else if(half(p.c)!==curH){curSame=false;break;} }
+  if(curSame) return true;
+  // まだ揃っていない場合は、この移動で全員が同色陣に揃うのを防ぐ
   let h=null,same=true;
   for(const p of ms){
     const c=(p.id===moveId)?nc:p.c;
@@ -820,7 +849,7 @@ function netSerialize(){
   return {
     pieces:G.pieces.map(p=>({id:p.id,type:p.type,owner:p.owner,r:p.r,c:p.c,
       hp:p.hp,ap:p.ap,maxAp:p.maxAp,dead:p.dead,flags:p.flags})),
-    traps:G.traps,bombs:G.bombs,walls:(G.walls||[]).map(w=>({r:w.r,c:w.c,life:w.life})),meteors:(G.meteors||[]).map(m=>({id:m.id,owner:m.owner,cells:m.cells,fuse:m.fuse})),kills:G.kills,setupCount:G.setupCount,
+    traps:G.traps,bombs:G.bombs,walls:(G.walls||[]).map(w=>({r:w.r,c:w.c,life:w.life})),meteors:(G.meteors||[]).map(m=>({id:m.id,owner:m.owner,cells:m.cells,fuse:m.fuse})),territories:(G.territories||[]).map(t=>({r:t.r,c:t.c,owner:t.owner})),kills:G.kills,setupCount:G.setupCount,
     phase:G.phase,turn:G.turn,nphase:G.nphase,
     respawnQueue:G.respawnQueue,over:G.over
   };
@@ -843,6 +872,7 @@ function applyState(S){
   G.bombs=S.bombs.map(b=>({owner:opp(b.owner),r:5-b.r,c:b.c,fuse:b.fuse}));
   G.walls=(S.walls||[]).map(w=>({r:5-w.r,c:w.c,life:w.life}));
   G.meteors=(S.meteors||[]).map(m=>({id:m.id,owner:opp(m.owner),cells:m.cells.map(cc=>({r:5-cc.r,c:cc.c})),fuse:m.fuse}));
+  G.territories=(S.territories||[]).map(t=>({r:5-t.r,c:t.c,owner:opp(t.owner)}));
   G.kills={P:S.kills.E,E:S.kills.P};
   G.setupCount={P:S.setupCount.E,E:S.setupCount.P};
   G.phase=S.phase;G.turn=opp(S.turn);G.nphase=S.nphase;
@@ -1017,7 +1047,7 @@ function newNetGame(first,rnd,deal){
   G={pieces:[],traps:[],bombs:[],kills:{P:0,E:0},
      phase:"setup",nphase:"setup",turn:"P",
      setupCount:{P:0,E:0},slotsLeft:1,currentActor:null,attackUsed:false,
-     respawnQueue:[],over:false,trapProb:[],ninjaProb:[],walls:[],meteors:[],aiTypes:[]};
+     respawnQueue:[],over:false,trapProb:[],ninjaProb:[],walls:[],meteors:[],territories:[],aiTypes:[]};
   UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
   pid=1; aiMoveHistory=[]; aiPosHistory={};
   $("#log").innerHTML="";
@@ -1106,13 +1136,21 @@ function colorOkPlacement(owner,c){
   if(ms.length<2) return true;
   return !(ms.every(p=>half(p.c)===half(c)));
 }
+/* 隕石が(ic列)へ着弾して盤面に戻る時、全主力3体が同色陣に偏らないか。
+   着弾中の隕石は mains() から除外されているので、盤上の他主力＋着弾列で判定する。 */
+function meteorImpactColorOk(owner, ic){
+  const ms=mains(owner); // 盤外退避中の隕石は含まれない（＝盤上の他主力のみ）
+  if(ms.length<2) return true;       // 他主力が1体以下なら3体揃いようがない
+  const h=half(ic);
+  return !ms.every(p=>half(p.c)===h); // 他主力が全員着弾列と同色陣なら偏るのでNG
+}
 function placePlayerPiece(r,c){
   const type=UI.extra.type;
   const p=makePiece(type,"P",r,c);
   G.pieces.push(p);
   G.setupCount.P++;
   sfx("place");
-  log(`自軍：${PIECES[type].name}を配置`,"p");
+  if(type!=="sagishi")log(`自軍：${PIECES[type].name}を配置`,"p"); // 詐欺師は偽装先確定後にログ
   UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
   const after=()=>{
     if(NET.on){
@@ -1122,7 +1160,18 @@ function placePlayerPiece(r,c){
       netDispatch();
     }else{render();beginSetupStep();}
   };
-  if(type==="esper"){ askEsperMode(p,after); } else after();
+  if(type==="esper"){ askEsperMode(p,after); }
+  else if(type==="sagishi"){ askDisguise(p,after,"配置"); }
+  else after();
+}
+function askDisguise(p,cb,verb){
+  // 偽装先の駒を選ぶ（詐欺師・獣以外の全駒から）
+  openPiecePicker("詐欺師：偽装する駒を選択",(t)=>{
+    p.flags.disguiseAs=t;
+    // ログは偽装先の駒名で表示（相手を欺くため詐欺師とは表示しない）
+    log(`自軍：${PIECES[t].name}を${verb||"配置"}`,"p");
+    cb();
+  }, {exclude:["sagishi"]});
 }
 function askEsperMode(p,cb){
   openModal("超能力者のモード選択",
@@ -1208,6 +1257,13 @@ function resolveMeteorImpact(meteorId, ir, ic){
   log(`☄ 隕石が ${cellName(ir,ic)} に着弾！`,p&&p.owner==="P"?"p":"e");
   sfx("bomb");
   spawnShatterAt(ir,ic,p?p.owner:"P");
+  // 着弾マスが相手の領地なら破壊する
+  const meteorOwner = p?p.owner:"P";
+  if(G.territories&&G.territories.length){
+    const before=G.territories.length;
+    G.territories=G.territories.filter(t=>!(t.r===ir&&t.c===ic&&t.owner!==meteorOwner));
+    if(G.territories.length<before)log("流星群が相手の領地を破壊した！","s");
+  }
   // ① 着弾マスにいる駒は撃破（隕石本体を除く）。
   //    隕石はそのマスへ移動するので、不死鳥であっても即kill（灰から蘇らせない）。重なりを防ぐ。
   const direct=at(ir,ic);
@@ -1353,7 +1409,7 @@ function placeRespawn(r,c){
   const p=makePiece(type,"P",r,c);
   G.pieces.push(p);
   sfx("place");
-  log(`自軍：${PIECES[type].name}を召喚`,"p");
+  if(type!=="sagishi")log(`自軍：${PIECES[type].name}を召喚`,"p"); // 詐欺師は偽装先確定後にログ
   UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
   const after=()=>{
     render();
@@ -1361,7 +1417,9 @@ function placeRespawn(r,c){
       promptMaou([p],0,()=>processRespawns(cont));
     }else processRespawns(cont);
   };
-  if(type==="esper") askEsperMode(p,after); else after();
+  if(type==="esper") askEsperMode(p,after);
+  else if(type==="sagishi") askDisguise(p,after,"召喚");
+  else after();
 }
 function aiRespawn(){
   const threat=playerThreatMap();
@@ -1567,6 +1625,7 @@ function canSpendAPAfterStep(p, r, c, apAfter){
       if(!inB(nr,nc))continue;
       if(visAt(nr,nc,p.owner))continue;
       if(wallAt(nr,nc))continue;
+      if(territoryBlocks(p.owner,nr,nc))continue;
       const key=nr+","+nc;
       if(visited.has(key))continue;
       // pの本来位置は空きとして扱う（既にvisAtで除外されないため明示不要）
@@ -1621,6 +1680,7 @@ function stepOptions(p){
     if(!inB(nr,nc))continue;
     if(visAt(nr,nc,p.owner))continue;
     if(wallAt(nr,nc))continue;               // 壁のあるマスには入れない
+    if(territoryBlocks(p.owner,nr,nc))continue; // 相手の領地には入れない
     if(!colorOk(p.owner,p.id,nr,nc))continue;
     const apAfter = p.ap-1;
     // 移動後に行動力が余り、かつそこから一切動けない「行き止まり」マスは候補から外す。
@@ -1642,6 +1702,7 @@ function jumpOptions(p){
       if(!visAt(mr,mc,p.owner))continue;       // 中間に駒がある時のみ跳躍
       if(visAt(nr,nc,p.owner))continue;
       if(wallAt(nr,nc))continue;               // 着地マスが壁なら不可
+      if(territoryBlocks(p.owner,nr,nc))continue; // 相手の領地には着地不可
       if(!colorOk(p.owner,p.id,nr,nc))continue;
       out.push([nr,nc]);
     }
@@ -1681,6 +1742,8 @@ function takaCanChainFrom(p,lr,lc){
 /* マスに入る処理（罠・透明忍者を解決）戻り値: "ok"|"bounced"|"dead" */
 function enterSquare(p,nr,nc){
   const prevR=p.r,prevC=p.c;
+  // 相手の領地には入れない（自分の領地・領地なしは進入可）
+  if(territoryBlocks(p.owner,nr,nc))return "bounced";
   // 透明忍者チェック：透明中の「忍者」のマスに踏み込むと忍者が露見し、踏み込んだ駒が撃破される。
   // ※隕石（流星群中）は空へ昇っているだけなので、このロジックの対象外（即死させない）。
   const hidden=at(nr,nc);
@@ -1739,15 +1802,17 @@ function tryStep(p,nr,nc){
    ========================================================= */
 function atkDamage(p,kind,target){
   let d=1;
-  if(p.type==="kenshi")d+=0.5;
-  if(p.type==="senshi"){ if(p.hp<=1)d+=2; else if(p.hp<=2)d+=1; }
-  if(p.type==="yusha"&&p.flags.heroBoost&&kind==="melee")d=3;
+  // 狐は後ろの駒の与ダメ特性を引き継ぐ
+  const et = p.type==="kitsune" ? foxEffType(p) : p.type;
+  if(et==="kenshi")d+=0.5;
+  if(et==="senshi"){ if(p.hp<=1)d+=2; else if(p.hp<=2)d+=1; }
+  if(et==="yusha"&&p.flags.heroBoost&&kind==="melee")d=3;
   // 猪：通常攻撃は基本0.5ダメ。直進2マス移動直後（chargeReady）の突進攻撃のみ2ダメ。
-  if(p.type==="inoshishi"){
+  if(et==="inoshishi"){
     d = (p.flags.chargeReady && kind==="melee") ? 2 : 0.5;
   }
   // 海賊：通常攻撃の相手が自分よりHPが高い時（同数は不可）、与ダメ+1（合計2）
-  if(p.type==="kaizoku" && kind==="melee" && target && target.hp>p.hp)d+=1;
+  if(et==="kaizoku" && kind==="melee" && target && target.hp>p.hp)d+=1;
   return d;
 }
 /* 宇宙人の転移：列colの駒を dir 方向(-1=上/+1=下)へ「1マスだけ」移動させる。
@@ -1838,6 +1903,14 @@ function startPlayerTurn(){
     p.flags.takaJumped=false;
     if(p.type==="tatehei")p.flags.block=null; // 盾は毎ターン更新（手番開始でリセット）
   }
+  // 狐：自分のターン開始時に、後ろにいる駒の能力を獲得（このターン終了まで保持）。
+  //     移動後もこの継承は保たれる（開始時の後ろの駒で固定）。
+  for(const p of alive("P")){
+    if(p.type==="kitsune"){
+      const b=foxBehindPieceRaw(p);
+      p.flags.foxCopy = (b && b.type!=="kitsune") ? b.type : null;
+    }
+  }
   UI={mode:"action",sel:null,targets:new Set(),ability:null,extra:{}};
   // 手番開始時点のスナップショットを保存（攻撃フェーズ移行前ならやり直し可能）
   saveTurnSnapshot();
@@ -1915,7 +1988,11 @@ function finishPlayerTurn(){
     }
   }
   if(readyMeteor){
-    const cells=readyMeteor.cells.filter(c=>inB(c.r,c.c));
+    let cells=readyMeteor.cells.filter(c=>inB(c.r,c.c));
+    // 着弾で全主力3体が同色陣に偏るマスは除外する
+    const valid=cells.filter(c=>meteorImpactColorOk("P",c.c));
+    // 偏らない候補が1つでもあればそれだけを提示。全て偏る場合のみ全候補を許可（詰み回避）
+    if(valid.length>0)cells=valid;
     // 着弾地点は必ず手動で選択する（オンライン・CPU戦とも）。
     UI={mode:"meteorTargetEnd",sel:null,targets:new Set(cells.map(c=>c.r+","+c.c)),ability:{meteorId:readyMeteor.id},extra:{}};
     setPhaseBar('<span class="turnP">☄ 流星群が着弾します — 着弾地点を選択してください（赤いマス）</span>');
@@ -2015,7 +2092,9 @@ function abilityButtons(p){
   const isMyTurnAction = (G.turn==="P"&&G.phase==="action"&&!G.over);
   if(!isMyTurnAction)return B;
   const canAct = G.slotsLeft>0||G.currentActor===p.id;
-  switch(p.type){
+  // 狐は後ろの駒の能力を引き継ぐ（自分の位置から発動）。実効タイプで能力を出す。
+  const switchType = p.type==="kitsune" ? foxEffType(p) : p.type;
+  switch(switchType){
     case "kyuhei":{
       const ts=rangedCellsFrom(p,p.r,p.c).filter(([r,c])=>{const t=visAt(r,c,"P");return t&&t.owner==="E";});
       A("遠距離攻撃（行1）",canAct&&p.ap>=1&&ts.length>0,()=>{
@@ -2057,20 +2136,6 @@ function abilityButtons(p){
         UI.mode="ability";UI.ability={type:"trap",piece:p};
         UI.targets=new Set(cells.map(t=>t.join(",")));render();
       });break;}
-    case "renkin":{
-      // 周囲8マスの空きマス（透明忍者を除く他の駒が居ないマス・壁も不可）に壁を設置
-      const cells=ALL8.map(([dr,dc])=>[p.r+dr,p.c+dc])
-        .filter(([r,c])=>{
-          if(!inB(r,c)||wallAt(r,c))return false;
-          const occ=at(r,c);
-          if(!occ)return true;                       // 空きマス
-          if(occ.flags.invisible&&occ.type==="ninja")return true; // 透明忍者がいるマスは設置可（撃破）
-          return false;                              // それ以外の駒がいるマスは不可
-        });
-      A("壁の錬成（行0・毎ターン1回・HP0.5）",canAct&&!p.flags.usedFree&&p.hp>0.5&&cells.length>0,()=>{
-        UI.mode="ability";UI.ability={type:"wall",piece:p};
-        UI.targets=new Set(cells.map(t=>t.join(",")));render();
-      });break;}
     case "ninja":
       A("透明化（行1）",canAct&&p.ap>=1&&!p.flags.invisible,()=>{
         if(!takeActionSlot(p))return;
@@ -2087,24 +2152,43 @@ function abilityButtons(p){
         if(!takeActionSlot(p))return;
         p.ap=0;
         p.flags.pendingMeteor=true;
-        p.flags.invisible=true;            // その場から消える（被弾もしない）
+        p.flags.invisible=true;            // 盤上には描画しない
         p.flags.meteorOrigin={r:p.r,c:p.c};
         // 着弾候補8箇所（盤内）を記録。fuse=1（爆弾と同じ：次の自分のターンエンドで着弾）
         if(!G.meteors)G.meteors=[];
         G.meteors=G.meteors.filter(m=>m.id!==p.id);
         G.meteors.push({id:p.id,owner:p.owner,cells:cells.map(([r,c])=>({r,c})),fuse:1});
+        // 隕石を盤外へ退避させる（そのマスは空くので、他の駒が普通に進入できる）
+        p.r=-1; p.c=-1;
         log("流星群を呼んだ…次の自分のターンエンド時に着弾する","p");
         sfx("teleport");render();
       });break;}
     case "uchujin":{
-      // 転移：縦1列を選び、上か下に列の駒を寄せる（行動力1＋HP0.5）
-      // まず列を選択させる（盤面のどのマスをタップしてもその列が対象）。
-      A("転移（行1・HP0.5）",canAct&&p.ap>=1&&p.hp>0.5,()=>{
-        UI.mode="ability";UI.ability={type:"warpCol",piece:p};
+      // 転移：上へ移動・下へ移動をそれぞれ別ボタンで表示。押した後に列を選ぶ。
+      A("転移：上へ移動（行1・HP0.5）",canAct&&p.ap>=1&&p.hp>0.5,()=>{
+        UI.mode="ability";UI.ability={type:"warpPick",piece:p,dir:-1};
         const cells=[];
         for(let r=0;r<6;r++)for(let c=0;c<6;c++)cells.push(r+","+c);
         UI.targets=new Set(cells);
-        setPhaseBar('<span class="turnP">転移：寄せたい縦1列をタップで選択</span>');
+        setPhaseBar('<span class="turnP">転移（上へ移動）：動かす縦1列をタップで選択</span>');
+        render();
+      });
+      A("転移：下へ移動（行1・HP0.5）",canAct&&p.ap>=1&&p.hp>0.5,()=>{
+        UI.mode="ability";UI.ability={type:"warpPick",piece:p,dir:1};
+        const cells=[];
+        for(let r=0;r<6;r++)for(let c=0;c<6;c++)cells.push(r+","+c);
+        UI.targets=new Set(cells);
+        setPhaseBar('<span class="turnP">転移（下へ移動）：動かす縦1列をタップで選択</span>');
+        render();
+      });break;}
+    case "ryoushu":{
+      // 領地化：周囲8マスの1つ（駒がおらず・壁でなく・相手の領地でもない空きマス）を領地にする
+      const cells=ALL8.map(([dr,dc])=>[p.r+dr,p.c+dc])
+        .filter(([r,c])=>inB(r,c)&&!wallAt(r,c)&&!at(r,c)&&territoryOwnerAt(r,c)!=="E");
+      A("領地化（行1）",canAct&&p.ap>=1&&cells.length>0,()=>{
+        UI.mode="ability";UI.ability={type:"territory",piece:p};
+        UI.targets=new Set(cells.map(t=>t.join(",")));
+        setPhaseBar('<span class="turnP">領地にする周囲1マスをタップで選択</span>');
         render();
       });break;}
     case "kusushi":{
@@ -2172,7 +2256,7 @@ function abilityButtons(p){
         render();
       });break;
     case "majo":{
-      A("入替の魔法（行1）",canAct&&p.ap>=1,()=>{
+      A("入替の魔法（行1・HP0.5）",canAct&&p.ap>=1&&p.hp>0.5,()=>{
         const ts=G.pieces.filter(t=>!t.dead&&!(t.flags.invisible&&t.owner!=="P"));
         UI.mode="ability";UI.ability={type:"swap1",piece:p};
         UI.targets=new Set(ts.map(t=>t.r+","+t.c));render();
@@ -2270,24 +2354,27 @@ function resolveAbilityClick(r,c){
       clearAbility();
       processRespawns(()=>render());
       return;}
-    case "warpCol":{
-      // 列を選択→方向（上/下）選択へ。選んだ列の上端(0行)と下端(5行)をハイライトし、
-      // 上端タップ=上へ寄せる／下端タップ=下へ寄せる。
+    case "warpPick":{
+      // 列を選択したら、ボタンで選んだ方向へ即実行
       const col=c;
-      UI.mode="ability";UI.ability={type:"warpDir",piece:p,col};
-      UI.targets=new Set(["0,"+col, "5,"+col]);
-      setPhaseBar('<span class="turnP">転移：上へ寄せる（最上段）か下へ寄せる（最下段）かをタップ</span>');
-      render();
-      return;}
-    case "warpDir":{
-      const col=ab.col;
-      if(c!==col){ clearAbility();render();return; } // 別列は無視してキャンセル
-      const dir = (r===0) ? -1 : 1;   // 最上段=上へ(-1)、最下段=下へ(+1)
+      const dir=ab.dir;
       if(!takeActionSlot(p))break;
       p.ap--; p.hp=r2(p.hp-0.5);
       warpColumn(col, dir);
       log(`宇宙人が${col+1}列目を${dir<0?"上":"下"}へ転移させた（HP-0.5）`,"p",true);
       sfx("teleport");
+      if(p.hp<=0)killPiece(p,null,"self");
+      clearAbility();
+      processRespawns(()=>render());
+      return;}
+    case "territory":{
+      if(!takeActionSlot(p))break;
+      p.ap--;
+      if(!G.territories)G.territories=[];
+      // 自軍(P)の領地は最大1つ。新しく作ると古い領地は消える。
+      G.territories=G.territories.filter(t=>t.owner!=="P");
+      G.territories.push({r,c,owner:"P"});
+      log("領主が領地を宣言した（自分の駒しか入れない）","p",true);sfx("place");
       clearAbility();
       processRespawns(()=>render());
       return;}
@@ -2356,11 +2443,13 @@ function resolveAbilityClick(r,c){
       if(!t||t.owner!==ab.first.owner)break;
       if(!takeActionSlot(p))break;
       p.ap--;
+      p.hp=r2(p.hp-0.5);   // 魔女はスキル使用でHP-0.5
       const a=ab.first;
       const ar=a.r,acn=a.c;
       a.r=t.r;a.c=t.c;t.r=ar;t.c=acn;
-      log(`魔女の入替魔法！${PIECES[a.type].name}と${PIECES[t.type].name}が入れ替わった`,"p");
+      log(`魔女の入替魔法！${PIECES[a.type].name}と${PIECES[t.type].name}が入れ替わった（魔女HP-0.5）`,"p");
       sfx("swap");
+      if(p.hp<=0)killPiece(p,null,"self"); // HP消費で倒れる場合
       break;}
     case "bomb":{
       if(!takeActionSlot(p))break;
@@ -2781,6 +2870,13 @@ function startAITurn(){
     p.flags.chargeDir=null; p.flags.chargeSteps=0; p.flags.chargeReady=false;
     p.flags.takaJumped=false;
     if(p.type==="tatehei")p.flags.block=null; // 盾は毎ターン更新
+  }
+  // 狐：ターン開始時に後ろの駒の能力を獲得（このターン保持）
+  for(const p of alive("E")){
+    if(p.type==="kitsune"){
+      const b=foxBehindPieceRaw(p);
+      p.flags.foxCopy = (b && b.type!=="kitsune") ? b.type : null;
+    }
   }
   setPhaseBar('<span class="turnE"><span class="spinner"></span>敵軍の手番 — '+(aiLevel==="strong"?"徹底思考中…（つよい・最大20秒）":aiLevel==="normal"?"深く思考中…（ふつう・最大8秒）":"思考中…")+'</span>');
   UI={mode:"ai",sel:null,targets:new Set(),ability:null,extra:{}};
@@ -3254,7 +3350,7 @@ const SS={ // 静的データ（全24種対応）
 const SS_MAXAP={kiba:2,ninja:2,boken:2};
 function ssClone(st){
   return {
-    side:st.side, kP:st.kP, kE:st.kE, trapProb:st.trapProb, ninjaProb:st.ninjaProb, walls:st.walls, bombs:st.bombs,
+    side:st.side, kP:st.kP, kE:st.kE, trapProb:st.trapProb, ninjaProb:st.ninjaProb, walls:st.walls, bombs:st.bombs, territories:st.territories,
     ps:st.ps.map(p=>({id:p.id,t:p.t,o:p.o,r:p.r,c:p.c,hp:p.hp,
       block:p.block?{r:p.block.r,c:p.block.c}:null,phoenix:p.phoenix,maxAp:p.maxAp,heroBoost:p.heroBoost,invis:p.invis}))
   };
@@ -3263,7 +3359,7 @@ function ssClone(st){
 function ssFromGame(side){
   // 透明化した敵(P)忍者の正確な位置はAIに見せない。予測マップ(ninjaProb)で扱う。
   const hiddenFoeNinja = (side==="E");
-  const ps=G.pieces.filter(p=>!p.dead && !(hiddenFoeNinja && p.owner==="P" && p.type==="ninja" && p.flags.invisible)).map(p=>({
+  const ps=G.pieces.filter(p=>!p.dead && !p.flags.pendingMeteor && !(hiddenFoeNinja && p.owner==="P" && p.type==="ninja" && p.flags.invisible)).map(p=>({
     id:p.id,t:p.type,o:p.owner,r:p.r,c:p.c,hp:p.hp,
     block:p.flags.block?{r:p.flags.block.r,c:p.flags.block.c}:null,
     phoenix:!!p.flags.phoenix, maxAp:p.maxAp, heroBoost:!!p.flags.heroBoost,
@@ -3279,16 +3375,22 @@ function ssFromGame(side){
   if(hiddenFoeNinja && G.ninjaProb){
     for(const e of G.ninjaProb)for(const cl of e.cells)ninjaProb.push({r:cl.r,c:cl.c,prob:cl.prob});
   }
-  return {side, kP:G.kills.P, kE:G.kills.E, ps, trapProb, ninjaProb, walls:(G.walls||[]).map(w=>({r:w.r,c:w.c})), bombs:(G.bombs||[]).map(b=>({r:b.r,c:b.c,owner:b.owner,fuse:b.fuse}))};
+  return {side, kP:G.kills.P, kE:G.kills.E, ps, trapProb, ninjaProb, walls:(G.walls||[]).map(w=>({r:w.r,c:w.c})), bombs:(G.bombs||[]).map(b=>({r:b.r,c:b.c,owner:b.owner,fuse:b.fuse})), territories:(G.territories||[]).map(t=>({r:t.r,c:t.c,owner:t.owner}))};
 }
 const ssAt=(st,r,c)=>st.ps.find(p=>p.r===r&&p.c===c);
 function ssMoveDirs(t){ return (t==="kiba"||t==="ninja"||t==="kaizoku"||t==="taka")?ALL8:ORTHO; }
 function ssColorOk(st,p,nr,nc){
   // 自陣3駒が同じ色の陣に偏ってはいけない（列0-2:左 / 3-5:右）
   const half=c=>c<3?0:1;
+  const allies=st.ps.filter(q=>q.o===p.o);
+  if(allies.length<3)return true;
+  // 既に全主力が同じ色陣なら、この制約で縛らない（一方向しか動けない詰みを防ぐ）
+  let curH=null,curSame=true;
+  for(const q of allies){ if(curH===null)curH=half(q.c); else if(half(q.c)!==curH){curSame=false;break;} }
+  if(curSame)return true;
   const h=half(nc);
   let same=1;
-  for(const q of st.ps){ if(q.o===p.o&&q.id!==p.id&&half(q.c)===h) same++; }
+  for(const q of allies){ if(q.id!==p.id&&half(q.c)===h) same++; }
   return same<3;
 }
 function ssAtk(p,kind){
@@ -3410,6 +3512,8 @@ function ssReach(st,p){
   const dirs=ssMoveDirs(p.t);
   const occupied=(r,c)=>st.ps.some(q=>q.id!==p.id&&q.r===r&&q.c===c);
   const wall=(r,c)=>st.walls&&st.walls.some(w=>w.r===r&&w.c===c); // 錬金術師の壁
+  // 領地：相手（p.o と異なる owner）の領地マスには入れない
+  const terrBlock=(r,c)=>{ const t=st.territories&&st.territories.find(x=>x.r===r&&x.c===c); return t && t.owner!==p.o; };
   for(let s=0;s<p.maxAp;s++){
     const nf=[];
     for(const cur of frontier){
@@ -3422,6 +3526,7 @@ function ssReach(st,p){
         if(res[k])continue;
         if(occupied(nr,nc))continue;
         if(wall(nr,nc))continue;              // 壁のマスには入れない
+        if(terrBlock(nr,nc))continue;         // 相手の領地には入れない
         if(!ssColorOk(st,p,nr,nc))continue;
         const stepCost=wrap?0:1;
         res[k]={cost:res[cur.r+","+cur.c].cost+stepCost};
@@ -3439,6 +3544,7 @@ function ssReach(st,p){
       if(!occupied(mr,mc))continue;           // 中間に駒がある時のみ跳躍
       if(occupied(nr,nc))continue;
       if(wall(nr,nc))continue;                // 着地マスが壁なら不可
+      if(terrBlock(nr,nc))continue;           // 相手の領地には着地不可
       if(!ssColorOk(st,p,nr,nc))continue;
       const k=nr+","+nc;
       if(!res[k]||res[k].cost>2)res[k]={cost:2};
@@ -3575,6 +3681,28 @@ function ssEval(st){
         const pull = attackerTypes.has(e.t)?18:10; // 強襲・近接は特に強く親へ向かう
         v-=dt*pull;
         if(dt===1)v+=55;                       // 調教師に隣接＝討ち取り目前
+      }
+    }
+  }
+
+  // === 対盾：盾を持つ敵駒に対しては、盾で塞がれていないマスから攻める ===
+  // 盾は隣接1マスからの攻撃だけを防ぐ。行動力2の駒や斜め移動できる駒は、盾の無いマスへ
+  // 回り込んで攻撃できる。AIはその位置取り（盾の利かない隣接マス）を高く評価する。
+  for(const tgt of pP){
+    if(!tgt.block)continue;                 // 盾で守っている敵駒のみ対象
+    for(const e of eP){
+      if(SS.noNormal.has(e.t))continue;     // 通常攻撃を持たない駒は対象外
+      const adj = Math.abs(e.r-tgt.r)+Math.abs(e.c-tgt.c)===1; // 直交で隣接しているか
+      if(!adj)continue;
+      const blocked = (e.r===tgt.block.r && e.c===tgt.block.c); // 盾で塞がれたマスにいるか
+      const dmg=ssAtk(e,"melee")||1;
+      const wouldKill = tgt.hp-dmg<=0 && !(tgt.t==="fushicho"&&!tgt.phoenix);
+      if(!blocked){
+        // 盾の利かないマスから隣接＝有効打。討ち取れるなら大きく加点
+        v += wouldKill ? 90 : 30;
+      }else{
+        // 盾で塞がれたマスからの隣接は無効打。回り込みを促すため、わずかに減点
+        v -= 12;
       }
     }
   }
@@ -4611,9 +4739,11 @@ function aiExecutePlan(plan){
             if(!a||!b||a.owner!==b.owner)return;
             if((a.flags.invisible&&a.owner!=="E")||(b.flags.invisible&&b.owner!=="E"))return;
             p.ap--;
+            p.hp=r2(p.hp-0.5); // 魔女はスキル使用でHP-0.5
             const ar=a.r,ac=a.c; a.r=b.r;a.c=b.c; b.r=ar;b.c=ac;
-            log(`敵の魔女の入替魔法！${PIECES[a.type].name}と${PIECES[b.type].name}が入れ替わった`,"e");
+            log(`敵の魔女の入替魔法！${PIECES[a.type].name}と${PIECES[b.type].name}が入れ替わった（魔女HP-0.5）`,"e");
             sfx("swap");
+            if(p.hp<=0)killPiece(p,null,"self");
           });
         }else if(plan.ability.kind==="poison"){
           steps.push(()=>{
@@ -4930,6 +5060,9 @@ function render(){
         cell.appendChild(lifeRow);
       }
     }
+    // 領地マス（自軍=P/敵軍=E で色分け）
+    const terrOwner=territoryOwnerAt(r,c);
+    if(terrOwner){ cell.classList.add(terrOwner==="P"?"terrP":"terrE"); }
     for(const p of G.pieces)if(!p.dead&&p.flags.block&&p.flags.block.r===r&&p.flags.block.c===c){ addMk("mk-block","🛡","盾の防御"); }
     if(mkRow.children.length)cell.appendChild(mkRow);
     const p=at(r,c);
@@ -4962,7 +5095,10 @@ function render(){
         au.innerHTML='<i></i><i></i><i></i>';
         d.appendChild(au);
       }
-      const kj=document.createElement("div");kj.className="kj";kj.textContent=PIECES[p.type].k;
+      // 詐欺師：相手（敵軍E）から見ると偽装先の駒として表示される。自軍は詐のまま。
+      let kjType=p.type;
+      if(p.type==="sagishi" && p.owner==="E" && p.flags.disguiseAs){ kjType=p.flags.disguiseAs; }
+      const kj=document.createElement("div");kj.className="kj";kj.textContent=PIECES[kjType].k;
       d.appendChild(kj);
       // 超能力者：射程モード（十字／斜め）を両者に表示
       if(p.type==="esper"){
@@ -5049,7 +5185,13 @@ function renderInfo(){
     else el.innerHTML='<span style="color:var(--sub)">駒を選択すると詳細が表示されます。</span>';
     return;
   }
-  const I=PIECES[p.type];
+  // 詐欺師の表示：敵軍のものは偽装先として、自軍のものは詐欺師＋偽装先の注記を表示
+  let I=PIECES[p.type];
+  let extraNote="";
+  if(p.type==="sagishi" && p.flags.disguiseAs){
+    if(p.owner==="E"){ I=PIECES[p.flags.disguiseAs]; } // 相手には偽装先の情報を見せる
+    else { extraNote=`<div class="desc" style="color:#e7c457">（${PIECES[p.flags.disguiseAs].name}として偽装中）</div>`; }
+  }
   let html=`<span class="pname">${I.name}</span>
     <span class="stat">${p.owner==="P"?"自軍":"敵軍"}／HP ${fmt(p.hp)}／行動力 ${p.ap}/${p.maxAp}</span>`;
   // 現在ついているバフ・デバフを表示
@@ -5059,7 +5201,7 @@ function renderInfo(){
     for(const s of st) html+=`<span class="statusTag ${s.cls}">${s.label}</span>`;
     html+='</div>';
   }
-  html+=`<div class="desc">${I.desc}</div>`;
+  html+=`<div class="desc">${I.desc}</div>`+extraNote;
   el.innerHTML=html;
   if(p.owner==="P"&&UI.mode!=="ability"){
     const btns=abilityButtons(p);
@@ -5099,30 +5241,59 @@ function openModal(title,bodyHtml,buttons){
 }
 function closeModal(){$("#modalBack").classList.add("hidden");}
 let pickerArgs=null;
-function openPiecePicker(title,cb){
+function openPiecePicker(title,cb,opts){
+  opts=opts||{};
   pickerArgs={title,cb};
   // 勇者・隕石は1駒制限：自軍に既にいれば選べない
   const hasYusha=alive("P").some(p=>p.type==="yusha");
   const hasInseki=alive("P").some(p=>p.type==="inseki");
-  // 対人戦（オンライン）でのみ、仮追加の駒も選べる
-  // 仮追加の駒はプレイヤー専用。CPU戦・対人戦どちらでもプレイヤーの選択肢に出す
-  // （openPiecePickerはプレイヤーの配置・再配置でのみ呼ばれる）。CPUはPICKABLEのみ使う。
-  const list = PICKABLE.concat(PVP_PIECES);
-  let html='<div class="pickGrid">';
-  for(const t of list){
-    const I=PIECES[t];
-    const locked=(t==="yusha"&&hasYusha)||(t==="inseki"&&hasInseki);
-    const lockMsg=(t==="inseki")?"すでに隕石が場にいるため選べません":"すでに勇者が場にいるため選べません";
-    html+=`<div class="pCard${locked?" locked":""}${I.pvpOnly?" pvpCard":""}" data-t="${t}"${locked?' data-locked="1"':""}>
-      <div class="t"><span class="nm">${I.name}${I.pvpOnly?' <span class="pvpTag">仮</span>':''}</span><span class="ap">行動力${I.ap}</span></div>
-      <div class="d">${locked?lockMsg:I.desc}</div></div>`;
-  }
-  html+="</div>";
+  const excludeSet=new Set(opts.exclude||[]);
+  const list = PICKABLE.filter(t=>!excludeSet.has(t));
+  // 検索ボックス（駒名・説明で絞り込み）＋駒グリッド
+  const renderCards=(q)=>{
+    const query=(q||"").trim().toLowerCase();
+    let html='<div class="pickGrid">';
+    let shown=0;
+    for(const t of list){
+      const I=PIECES[t];
+      // 検索：駒名・かな・説明・表示漢字にマッチ
+      if(query){
+        const hay=(I.name+" "+(I.k||"")+" "+(I.desc||"")).toLowerCase();
+        if(!hay.includes(query))continue;
+      }
+      shown++;
+      const locked=(t==="yusha"&&hasYusha)||(t==="inseki"&&hasInseki);
+      const lockMsg=(t==="inseki")?"すでに隕石が場にいるため選べません":"すでに勇者が場にいるため選べません";
+      html+=`<div class="pCard${locked?" locked":""}" data-t="${t}"${locked?' data-locked="1"':""}>
+        <div class="t"><span class="nm">${I.name}</span><span class="ap">行動力${I.ap}</span></div>
+        <div class="d">${locked?lockMsg:I.desc}</div></div>`;
+    }
+    if(shown===0)html+='<div style="padding:12px;opacity:.7">該当する駒がありません</div>';
+    html+="</div>";
+    return html;
+  };
+  const searchBox='<input id="pieceSearch" type="text" placeholder="駒を検索（名前・能力で絞り込み）" '+
+    'style="width:100%;box-sizing:border-box;padding:9px 12px;margin-bottom:10px;border-radius:8px;'+
+    'border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.08);color:#fff;font-size:15px" autocomplete="off">';
+  const html=searchBox+'<div id="pickCards">'+renderCards("")+'</div>';
   openModal(title,html,[{label:"盤面を確認する",fn:()=>{closeModal();showPeekBack();}}]);
-  $("#modalBody").querySelectorAll(".pCard").forEach(card=>{
-    if(card.dataset.locked){ card.onclick=()=>{}; return; } // 勇者ロック中は反応しない
-    card.onclick=()=>{sfx("pick");pickerArgs=null;hidePeekBack();closeModal();cb(card.dataset.t);};
-  });
+  // カードのクリックハンドラを（再）設定する
+  const bindCards=()=>{
+    $("#modalBody").querySelectorAll(".pCard").forEach(card=>{
+      if(card.dataset.locked){ card.onclick=()=>{}; return; } // ロック中は反応しない
+      card.onclick=()=>{sfx("pick");pickerArgs=null;hidePeekBack();closeModal();cb(card.dataset.t);};
+    });
+  };
+  bindCards();
+  // 検索入力で絞り込み
+  const sb=$("#pieceSearch");
+  if(sb){
+    sb.oninput=()=>{
+      const cards=$("#pickCards");
+      if(cards)cards.innerHTML=renderCards(sb.value);
+      bindCards();
+    };
+  }
 }
 function showPeekBack(){
   hidePeekBack();
