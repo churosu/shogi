@@ -475,6 +475,14 @@ function foxEffType(p){
 }
 /* 後方互換：現在の後ろの駒（情報表示などで参照する場合） */
 function foxBehindPiece(p){ return foxBehindPieceRaw(p); }
+/* 罠の setter（帰属先）ID。狐が罠師をコピーして設置する場合はコピー元の罠師IDを使う。 */
+function trapSetterId(p){
+  if(p.type==="kitsune" && p.flags.foxCopy==="wanashi" && p.flags.foxCopyId!=null){
+    const src=byId(p.flags.foxCopyId);
+    if(src && !src.dead) return src.id; // コピー元の罠師が健在ならそのIDに帰属
+  }
+  return p.id;
+}
 function colorOk(owner, moveId, nr, nc){
   // moveId の駒が (nr,nc) に居ると仮定して、主力3駒が同色陣に揃わないか
   const ms=mains(owner);
@@ -1909,6 +1917,7 @@ function startPlayerTurn(){
     if(p.type==="kitsune"){
       const b=foxBehindPieceRaw(p);
       p.flags.foxCopy = (b && b.type!=="kitsune") ? b.type : null;
+      p.flags.foxCopyId = (b && b.type!=="kitsune") ? b.id : null; // コピー元の駒ID（罠のsetter等に使用）
     }
   }
   UI={mode:"action",sel:null,targets:new Set(),ability:null,extra:{}};
@@ -2093,7 +2102,9 @@ function abilityButtons(p){
   if(!isMyTurnAction)return B;
   const canAct = G.slotsLeft>0||G.currentActor===p.id;
   // 狐は後ろの駒の能力を引き継ぐ（自分の位置から発動）。実効タイプで能力を出す。
-  const switchType = p.type==="kitsune" ? foxEffType(p) : p.type;
+  let switchType = p.type==="kitsune" ? foxEffType(p) : p.type;
+  // 狐が巫女をコピーしていても、巫女のバフ（神楽）を受けている間は神楽を使えない
+  if(p.type==="kitsune" && switchType==="miko" && p.flags.mikoBuff) switchType="kitsune";
   switch(switchType){
     case "kyuhei":{
       const ts=rangedCellsFrom(p,p.r,p.c).filter(([r,c])=>{const t=visAt(r,c,"P");return t&&t.owner==="E";});
@@ -2323,16 +2334,18 @@ function resolveAbilityClick(r,c){
     case "trap":{
       if(!takeActionSlot(p))break;
       p.ap--;
-      // この罠師の罠が上限(2)に達していたら、最古の1つを撤去
-      const mine=G.traps.filter(t=>t.setter===p.id);
-      if(mine.length>=2){
+      const sid=trapSetterId(p); // 狐が罠師をコピーしている場合はコピー元の罠師ID
+      // この罠師の罠は最大2つ。3つ目を置く時は、超過分（最古から）を撤去してから設置する。
+      let mine=G.traps.filter(t=>t.setter===sid);
+      while(mine.length>=2){
         const oldest=mine[0];
         const idx=G.traps.indexOf(oldest);
-        if(idx>=0){G.traps.splice(idx,1);log("最も古い罠を撤去して設置し直した","p",true);}
+        if(idx>=0)G.traps.splice(idx,1);
+        mine=G.traps.filter(t=>t.setter===sid);
       }
-      G.traps.push({owner:"P",r,c,setter:p.id});
+      G.traps.push({owner:"P",r,c,setter:sid});
       // AIには罠の正確な位置は見えない。罠師の位置から周囲8マスの設置確率を推定して保存する
-      recordTrapProbability(p.id, p.r, p.c);
+      recordTrapProbability(sid, p.r, p.c);
       log("罠を仕掛けた（敵には見えない）","p",true);sfx("pick");
       break;}
     case "wall":{
@@ -2876,6 +2889,7 @@ function startAITurn(){
     if(p.type==="kitsune"){
       const b=foxBehindPieceRaw(p);
       p.flags.foxCopy = (b && b.type!=="kitsune") ? b.type : null;
+      p.flags.foxCopyId = (b && b.type!=="kitsune") ? b.id : null;
     }
   }
   setPhaseBar('<span class="turnE"><span class="spinner"></span>敵軍の手番 — '+(aiLevel==="strong"?"徹底思考中…（つよい・最大20秒）":aiLevel==="normal"?"深く思考中…（ふつう・最大8秒）":"思考中…")+'</span>');
@@ -4760,9 +4774,10 @@ function aiExecutePlan(plan){
             const {tr,tc}=plan.ability;
             if(!inB(tr,tc)||at(tr,tc)||G.traps.some(t=>t.r===tr&&t.c===tc))return;
             p.ap--;
-            const mine=G.traps.filter(t=>t.setter===p.id);
-            if(mine.length>=2){const idx=G.traps.indexOf(mine[0]);if(idx>=0)G.traps.splice(idx,1);}
-            G.traps.push({owner:"E",r:tr,c:tc,setter:p.id});
+            const sid=trapSetterId(p);
+            let mine=G.traps.filter(t=>t.setter===sid);
+            while(mine.length>=2){const idx=G.traps.indexOf(mine[0]);if(idx>=0)G.traps.splice(idx,1);mine=G.traps.filter(t=>t.setter===sid);}
+            G.traps.push({owner:"E",r:tr,c:tc,setter:sid});
             log("敵の罠師が罠を仕掛けた","e");sfx("trap");
           });
         }else if(plan.ability.kind==="summon"){
