@@ -1853,8 +1853,9 @@ function warpColumn(col, dir){
     }
     moves.push({p, nr});
   }
-  // 実際に移動を適用（先頭から順に処理済みなので衝突しない）
-  for(const m of moves){ m.p.r=m.nr; m.p.c=col; }
+  // 実際に移動を適用（先頭から順に処理済みなので衝突しない）。
+  // enterSquare経由にすることで、移動先に相手の罠があれば正しく発動する。
+  for(const m of moves){ enterSquare(m.p, m.nr, col); }
 }
 function normalAttackCells(p){
   if(PIECES[p.type].noNormal)return [];
@@ -4042,19 +4043,15 @@ function ssEval(st){
 
 
 
-  // === 設置済みの爆弾：爆心＋周囲8マス(3×3)へ1.5ダメージ。爆風圏のE駒は逃がすことを優先する。 ===
-  // ただし、その場に留まることで勝ち点（敵主力の撃破）を取れるなら、そちらを優先してよい。
+  // === 設置済みの爆弾：爆心＋周囲8マス(3×3)へ1.5ダメージ。爆風圏のE駒は大きく減点して逃がす。 ===
+  // 例外：その場に留まって「ゲームに勝てる」または「キル数で差をつけられる」時は減点しない。
   if(st.bombs&&st.bombs.length){
     for(const b of st.bombs){
       if(b.owner!=="P")continue;              // プレイヤーが設置した爆弾＝E駒に危険
       for(const e of eP){
         const cheb=Math.max(Math.abs(e.r-b.r),Math.abs(e.c-b.c));
         if(cheb>1)continue;                    // 3×3の爆風圏内か
-        // 駒の価値に応じて退避を優先（価値の高い駒ほど強く逃がす）
-        const worth=SS_PIECE_WORTH[e.t]||10;
-        let penalty = worth;                   // 爆風圏に留まる基本ペナルティ
-        if(e.hp<=1.5)penalty += 40;            // 1.5ダメで落ちる駒は決定的に逃がす
-        // その場に留まると敵主力を討ち取れる（勝ち点）なら、退避ペナルティを相殺
+        // その場に留まることで敵主力を討ち取れるか（勝ち点＝キル）を判定
         let securesKill=false;
         if(!SS.noNormal.has(e.t)){
           const dmg=ssAtk({t:e.t,heroBoost:e.heroBoost},"melee")||1;
@@ -4063,7 +4060,17 @@ function ssEval(st){
             if(Math.abs(e.r-f.r)+Math.abs(e.c-f.c)===1 && f.hp-dmg<=0){ securesKill=true; break; }
           }
         }
-        if(securesKill)continue;               // 勝ち点が取れるならその場に留まってよい（ペナルティなし）
+        // その撃破で勝てる or キル数で差をつけられるなら、爆風圏に留まってよい（減点なし）
+        if(securesKill){
+          const kAfter=st.kE+1;                 // この撃破後のE側キル数
+          const winsGame = kAfter>=2;           // 2キルで勝利
+          const gainsLead = kAfter>st.kP;       // キル数で相手を上回る
+          if(winsGame||gainsLead) continue;     // 例外：留まる価値がある
+        }
+        // それ以外は、爆風で受ける被害を強く嫌って大きく減点する（爆弾に寄る動きを抑制）
+        const worth=SS_PIECE_WORTH[e.t]||10;
+        let penalty = 60 + worth;               // 基本ペナルティを大きく
+        if(e.hp<=1.5)penalty += 120;            // 1.5ダメで落ちる駒は決定的に逃がす
         v-= penalty;
       }
     }
