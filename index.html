@@ -337,8 +337,9 @@ const PIECES = {
   inseki:    {name:"隕石",  k:"隕", ap:1, noNormal:true, desc:"通常攻撃不可。スキル「流星群」：行動力を全消費して発動、その場から消え、次の自分ターン開始時に5×5の四隅と中心線の8箇所から1つを選んで着弾（そのマスへ移動）。着弾マスの駒を撃破、周囲十字4マスに0.5ダメージ。反動は周囲に当てた時1・当てなかった時0.5"},
   uchujin:   {name:"宇宙人",k:"宙", ap:1, desc:"スキル「転移」（行動力1＋HP0.5）：縦1列を選び、上か下を選んでその列の駒全てをその方向へ1マス移動させる（端・壁・塞がれている駒は動かない）。通常攻撃可"},
   ryoushu:   {name:"領主",  k:"領", ap:1, desc:"スキル「領地化」（行動力1）：周囲8マスの1つを自分の領地にする（自軍で最大1つ）。自分の領地には自分の駒しか入れない。通常攻撃可"},
-  sagishi:   {name:"詐欺師",k:"詐", ap:1, desc:"召喚時に駒を1つ選び、相手にはその駒として表示される（偽装）。実際の能力は詐欺師。自分は詐欺師をタップで偽装先を確認できる。通常攻撃可"},
-  kitsune:   {name:"狐",    k:"狐", ap:1, desc:"自分のターン開始時、1マス後ろ（自陣側）にいる味方駒の能力・特性を獲得し、そのターン終了まで保持する（移動後も継承を保つ）。通常攻撃可"},
+  sagishi:   {name:"詐欺師",k:"詐", ap:1, desc:"召喚時に駒を1つ選び、相手にはその駒として表示される（偽装）。実際の能力は詐欺師。自分は詐欺師をタップで偽装先を確認できる。スキル「懐入」：ゲーム中1回、行動力を追加で1獲得。通常攻撃可"},
+  kitsune:   {name:"狐",    k:"狐", ap:1, desc:"スキル「変化」（行動力1）：盤上の自分か相手の駒を1つ選び、その駒に変化する（能力・動きもその駒になる）。ターンエンド時に狐へ戻り、HP-1。通常攻撃可"},
+  kami:      {name:"神",    k:"神", ap:1, desc:"スキル「超越」（行動力1）：使用後は通常攻撃せず即ターンエンド。まず相手のターンになり、その後に自分のターンを連続2回行える（その2ターン中は超越を使えない）。通常攻撃可"},
 };
 const PICKABLE = Object.keys(PIECES).filter(t=>t!=="kemono" && !PIECES[t].pvpOnly); // 獣以外の全駒（プレイヤー・CPU選出の母集団）
 const PVP_PIECES = Object.keys(PIECES).filter(t=>PIECES[t].pvpOnly);                 // （現在は空。旧・対人戦専用の仮駒）
@@ -365,7 +366,7 @@ function newGame(){
     phase:"setup", turn:"P",
     setupCount:{P:0,E:0},
     slotsLeft:1, currentActor:null, attackUsed:false,
-    respawnQueue:[], over:false, trapProb:[], ninjaProb:[], walls:[], meteors:[], territories:[],
+    respawnQueue:[], over:false, trapProb:[], ninjaProb:[], walls:[], meteors:[], territories:[], pExtraTurns:0, eExtraTurns:0, pPendingExtra:0,
     aiTypes:aiPickComposition(),
   };
   UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
@@ -459,29 +460,22 @@ function visAt(r,c,forOwner){ // 駒があるか（forOwnerの視点。敵の透
   return p;
 }
 function frontDr(owner){return owner==="P"?-1:1;}
-/* 狐の「後ろの駒」（自陣側の隣接駒）を実際の盤面から取得。ターン開始時の獲得判定に使う。 */
-function foxBehindPieceRaw(p){
-  if(!p||p.type!=="kitsune")return null;
-  const br=p.r - frontDr(p.owner); // 後ろ＝前方向の逆
-  const bc=p.c;
-  const b=at(br,bc);
-  if(b && !b.dead && b.owner===p.owner && b.type!=="kitsune") return b;
-  return null;
-}
-/* 狐の「実効タイプ」：ターン開始時に獲得した能力(foxCopy)を用いる。
-   これにより移動後も同じ能力を保持する。獲得していなければ狐自身。 */
-function foxEffType(p){
-  return (p.type==="kitsune" && p.flags.foxCopy) ? p.flags.foxCopy : (p.type==="kitsune" ? "kitsune" : p.type);
-}
-/* 後方互換：現在の後ろの駒（情報表示などで参照する場合） */
-function foxBehindPiece(p){ return foxBehindPieceRaw(p); }
-/* 罠の setter（帰属先）ID。狐が罠師をコピーして設置する場合はコピー元の罠師IDを使う。 */
-function trapSetterId(p){
-  if(p.type==="kitsune" && p.flags.foxCopy==="wanashi" && p.flags.foxCopyId!=null){
-    const src=byId(p.flags.foxCopyId);
-    if(src && !src.dead) return src.id; // コピー元の罠師が健在ならそのIDに帰属
+/* 罠の setter（帰属先）ID。通常は駒自身のID。 */
+function trapSetterId(p){ return p.id; }
+/* 変化中の狐を、指定 owner の手番終了時に狐へ戻し、HP-1を与える。 */
+function revertHengeFoxes(owner){
+  for(const p of G.pieces){
+    if(p.dead || p.owner!==owner || !p.flags.henge) continue;
+    p.flags.henge=false;
+    p.type="kitsune";
+    p.maxAp=PIECES.kitsune.ap;
+    if(p.ap>p.maxAp)p.ap=p.maxAp;
+    // 変化先固有のフラグが残らないよう、関連フラグを掃除
+    p.flags.chargeDir=null; p.flags.chargeSteps=0; p.flags.chargeReady=false;
+    p.flags.heroBoost=false; p.flags.invisible=false; p.flags.pendingMeteor=false;
+    log(`${pieceLabel(p)}は狐の姿に戻った（HP-1）`,owner==="P"?"p":"e");
+    dealDamage(p,1,null,"self");  // 変化解除の反動
   }
-  return p.id;
 }
 function colorOk(owner, moveId, nr, nc){
   // moveId の駒が (nr,nc) に居ると仮定して、主力3駒が同色陣に揃わないか
@@ -1055,7 +1049,7 @@ function newNetGame(first,rnd,deal){
   G={pieces:[],traps:[],bombs:[],kills:{P:0,E:0},
      phase:"setup",nphase:"setup",turn:"P",
      setupCount:{P:0,E:0},slotsLeft:1,currentActor:null,attackUsed:false,
-     respawnQueue:[],over:false,trapProb:[],ninjaProb:[],walls:[],meteors:[],territories:[],aiTypes:[]};
+     respawnQueue:[],over:false,trapProb:[],ninjaProb:[],walls:[],meteors:[],territories:[],pExtraTurns:0,eExtraTurns:0,pPendingExtra:0,aiTypes:[]};
   UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
   pid=1; aiMoveHistory=[]; aiPosHistory={};
   $("#log").innerHTML="";
@@ -1810,8 +1804,7 @@ function tryStep(p,nr,nc){
    ========================================================= */
 function atkDamage(p,kind,target){
   let d=1;
-  // 狐は後ろの駒の与ダメ特性を引き継ぐ
-  const et = p.type==="kitsune" ? foxEffType(p) : p.type;
+  const et = p.type;  // 変化中の狐は p.type 自体が変化先になっているため、そのまま判定する
   if(et==="kenshi")d+=0.5;
   if(et==="senshi"){ if(p.hp<=1)d+=2; else if(p.hp<=2)d+=1; }
   if(et==="yusha"&&p.flags.heroBoost&&kind==="melee")d=3;
@@ -1912,15 +1905,6 @@ function startPlayerTurn(){
     p.flags.takaJumped=false;
     if(p.type==="tatehei")p.flags.block=null; // 盾は毎ターン更新（手番開始でリセット）
   }
-  // 狐：自分のターン開始時に、後ろにいる駒の能力を獲得（このターン終了まで保持）。
-  //     移動後もこの継承は保たれる（開始時の後ろの駒で固定）。
-  for(const p of alive("P")){
-    if(p.type==="kitsune"){
-      const b=foxBehindPieceRaw(p);
-      p.flags.foxCopy = (b && b.type!=="kitsune") ? b.type : null;
-      p.flags.foxCopyId = (b && b.type!=="kitsune") ? b.id : null; // コピー元の駒ID（罠のsetter等に使用）
-    }
-  }
   UI={mode:"action",sel:null,targets:new Set(),ability:null,extra:{}};
   // 手番開始時点のスナップショットを保存（攻撃フェーズ移行前ならやり直し可能）
   saveTurnSnapshot();
@@ -1932,7 +1916,8 @@ function saveTurnSnapshot(){
   if(NET.on){turnSnapshot=null;return;} // オンライン対戦ではやり直し不可
   turnSnapshot=JSON.stringify({
     pieces:G.pieces, traps:G.traps, bombs:G.bombs,
-    kills:G.kills, pid:pid
+    kills:G.kills, pid:pid,
+    meteors:G.meteors||[], walls:G.walls||[], territories:G.territories||[]
   });
 }
 function restoreTurnSnapshot(){
@@ -1940,6 +1925,10 @@ function restoreTurnSnapshot(){
   const s=JSON.parse(turnSnapshot);
   G.pieces=s.pieces.map(p=>({...p,flags:{...p.flags}}));
   G.traps=s.traps; G.bombs=s.bombs; G.kills=s.kills; pid=s.pid;
+  // 流星群の着弾判定・壁・領地もやり直し前の状態に戻す（残留バグの防止）
+  G.meteors=(s.meteors||[]).map(m=>({...m}));
+  G.walls=(s.walls||[]).map(w=>({...w}));
+  G.territories=(s.territories||[]).map(t=>({...t}));
   G.slotsLeft=1; G.currentActor=null; G.attackUsed=false; G.acted=false;
   G.phase="action"; G.turn="P";
   UI={mode:"action",sel:null,targets:new Set(),ability:null,extra:{}};
@@ -2013,12 +2002,22 @@ function finishPlayerTurn(){
 }
 function finishPlayerTurnCore(){
   if(G.over)return;
+  revertHengeFoxes("P"); // 変化中の自軍の狐を元に戻す（HP-1）
   explodeBombs("P",()=>{
     if(G.over)return;
     decayWalls(); // 壁は5回のターンエンドで消滅
     // 相手（E）所有の透明解除：Pの手番終了で解除されるのはE忍者
     for(const p of alive("E"))p.flags.invisible=false;
     for(const p of alive("P")){p.flags.noAttack=false;p.flags.slowedVisual=false;p.flags.mikoBuff=false;}
+    // 神の超越：連続ターンが残っていれば、相手に渡さずもう一度自分のターンを行う（CPU戦のみ）。
+    if(!NET.on && (G.pExtraTurns||0)>0){
+      G.pExtraTurns--;
+      log(`超越：続けて自分のターン（残り${G.pExtraTurns}回）`,"p");
+      setTimeout(startPlayerTurn,450);
+      return;
+    }
+    // 連続ターンを使い切った（または元から無い）→ 相手へ手番を渡す。超越の再発動ロックも解除。
+    G.pExtraActive=false;
     if(NET.on){
       G.turn="E";G.phase="action";
       netSend("go");
@@ -2102,11 +2101,7 @@ function abilityButtons(p){
   const isMyTurnAction = (G.turn==="P"&&G.phase==="action"&&!G.over);
   if(!isMyTurnAction)return B;
   const canAct = G.slotsLeft>0||G.currentActor===p.id;
-  // 狐は後ろの駒の能力を引き継ぐ（自分の位置から発動）。実効タイプで能力を出す。
-  let switchType = p.type==="kitsune" ? foxEffType(p) : p.type;
-  // 狐が巫女をコピーしていても、巫女のバフ（神楽）を受けている間は神楽を使えない
-  if(p.type==="kitsune" && switchType==="miko" && p.flags.mikoBuff) switchType="kitsune";
-  switch(switchType){
+  switch(p.type){
     case "kyuhei":{
       const ts=rangedCellsFrom(p,p.r,p.c).filter(([r,c])=>{const t=visAt(r,c,"P");return t&&t.owner==="E";});
       A("遠距離攻撃（行1）",canAct&&p.ap>=1&&ts.length>0,()=>{
@@ -2202,6 +2197,42 @@ function abilityButtons(p){
         UI.targets=new Set(cells.map(t=>t.join(",")));
         setPhaseBar('<span class="turnP">領地にする周囲1マスをタップで選択</span>');
         render();
+      });break;}
+    case "kitsune":{
+      // 変化：盤上の自分か相手の駒を1つ選び、その駒に変化する（ターンエンドで狐に戻りHP-1）
+      const targets=G.pieces.filter(t=>!t.dead && t.id!==p.id && t.type!=="kitsune" && t.type!=="kemono"
+        && !(t.flags.invisible && t.owner!=="P")   // 相手の透明忍者は選べない（見えないため）
+        && !t.flags.pendingMeteor);                // 流星群中の隕石は盤外なので選べない
+      A("変化（行1）",canAct&&p.ap>=1&&targets.length>0,()=>{
+        UI.mode="ability";UI.ability={type:"henge",piece:p};
+        UI.targets=new Set(targets.map(t=>t.r+","+t.c));
+        setPhaseBar('<span class="turnP">変化する駒をタップで選択（自分・相手どちらでも）</span>');
+        render();
+      });break;}
+    case "sagishi":{
+      // 懐入：ゲーム中1回だけ、このターンの行動力を追加で+1する。
+      A("懐入（行動力+1・ゲーム1回）",canAct&&!p.flags.futokoroUsed,()=>{
+        if(!takeActionSlot(p))return;
+        p.flags.futokoroUsed=true;
+        p.ap++;                      // このターンの行動力を追加で1獲得
+        log("詐欺師が懐入を使った（行動力+1）","p",true);
+        sfx("buff");
+        render();
+      });break;}
+    case "kami":{
+      // 超越：発動すると通常攻撃せず即ターンエンド。まず相手のターンになり、その後に自分のターンを連続2回行える。
+      // 連続ターン予約中・連続ターン中（pExtraActive）は超越を使えない。
+      A("超越（行1）",canAct&&p.ap>=1&&!G.pExtraActive,()=>{
+        if(!takeActionSlot(p))return;
+        p.ap--;
+        G.pPendingExtra=2;           // 相手のターンの後、自分のターンを2回連続で行う（予約）
+        G.pExtraActive=true;         // 発動から連続ターン終了まで再発動不可
+        log("神が超越を発動した！相手の手番の後、自分のターンを2回続けて行う（通常攻撃せずターンエンド）","p",true);
+        sfx("buff");
+        // 通常攻撃をせずに即ターンエンド
+        UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
+        render();
+        processRespawns(()=>{ if(!G.over)finishPlayerTurn(); });
       });break;}
     case "kusushi":{
       const ts=ORTHO.map(([dr,dc])=>at(p.r+dr,p.c+dc)).filter(t=>t);
@@ -2389,6 +2420,25 @@ function resolveAbilityClick(r,c){
       G.territories=G.territories.filter(t=>t.owner!=="P");
       G.territories.push({r,c,owner:"P"});
       log("領主が領地を宣言した（自分の駒しか入れない）","p",true);sfx("place");
+      clearAbility();
+      processRespawns(()=>render());
+      return;}
+    case "henge":{
+      const t=at(r,c);
+      if(!t||t.id===p.id){ clearAbility();render();return; }
+      if(!takeActionSlot(p))break;
+      p.ap--;
+      // 変化：狐が選んだ駒の種類になる。ターンエンドで狐に戻るため、元が狐であることを記録。
+      const toType=t.type;
+      const newInfo=PIECES[toType];
+      p.flags.henge=true;              // 変化中フラグ（ターンエンドで解除・HP-1）
+      p.type=toType;                   // 種類そのものを変化先にする（能力・動き・与ダメも追従）
+      p.maxAp=newInfo.ap;              // 行動力を変化先の最大値に
+      // 変化直後はこのターンの残り行動力を変化先ぶん使えるようにする（移動・能力に使用可）
+      p.ap=newInfo.ap;
+      // 変化先が勇者なら魔王化前提はないので heroBoost は付与しない（通常の勇者として振る舞う）
+      log(`狐が${newInfo.name}に変化した！（ターンエンドで狐に戻りHP-1）`,"p",true);
+      sfx("buff");
       clearAbility();
       processRespawns(()=>render());
       return;}
@@ -2884,14 +2934,6 @@ function startAITurn(){
     p.flags.chargeDir=null; p.flags.chargeSteps=0; p.flags.chargeReady=false;
     p.flags.takaJumped=false;
     if(p.type==="tatehei")p.flags.block=null; // 盾は毎ターン更新
-  }
-  // 狐：ターン開始時に後ろの駒の能力を獲得（このターン保持）
-  for(const p of alive("E")){
-    if(p.type==="kitsune"){
-      const b=foxBehindPieceRaw(p);
-      p.flags.foxCopy = (b && b.type!=="kitsune") ? b.type : null;
-      p.flags.foxCopyId = (b && b.type!=="kitsune") ? b.id : null;
-    }
   }
   setPhaseBar('<span class="turnE"><span class="spinner"></span>敵軍の手番 — '+(aiLevel==="strong"?"徹底思考中…（つよい・最大20秒）":aiLevel==="normal"?"深く思考中…（ふつう・最大8秒）":"思考中…")+'</span>');
   UI={mode:"ai",sel:null,targets:new Set(),ability:null,extra:{}};
@@ -4924,6 +4966,9 @@ function aiExecutePlan(plan){
         if(aiForceAnyAction()){ render(); setTimeout(finishAITurn,300); return; }
         // ここに来るのは全駒が行動力0（もう誰も動けない）＝合法的に消費し切った状態のみ。
       }
+      // 保険：この手番でまだ通常攻撃していないのに、隣接する敵を狙える駒（忍者など）があれば必ず攻撃する。
+      // 探索の最善手に攻撃が含まれていなくても、無償の通常攻撃は取り逃さない。
+      if(!G.attackUsed){ aiTryOneAttack(); render(); }
       finishAITurn();return;
     }
     const f=steps[i++];
@@ -5001,12 +5046,20 @@ function aiTryOneAttack(){
 }
 function finishAITurn(){
   if(G.over)return;
+  revertHengeFoxes("E"); // 変化中の敵の狐を元に戻す（HP-1）
   shieldPhase("E",()=>{
     explodeBombs("E",()=>{
       if(G.over)return;
       decayWalls(); // 壁は5回のターンエンドで消滅
       for(const p of alive("P")){ if(p.flags.invisible)clearNinjaProb(p.id); p.flags.invisible=false; }
       for(const p of alive("E")){p.flags.noAttack=false;p.flags.slowedVisual=false;p.flags.mikoBuff=false;}
+      // 神の超越：相手（E）の手番が終わったので、予約されていた連続自分ターンを有効化する。
+      // 次の自分のターン＝1回目。残りの (pPendingExtra-1) 回を連続ターン(pExtraTurns)として与える。
+      if((G.pPendingExtra||0)>0){
+        G.pExtraTurns=(G.pPendingExtra-1);
+        G.pPendingExtra=0;
+        log(`超越：ここから自分のターンを${G.pExtraTurns+1}回続けて行う`,"p");
+      }
       setTimeout(startPlayerTurn,400);
     });
   });
