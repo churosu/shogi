@@ -181,6 +181,12 @@ h1 small{font-size:11px;letter-spacing:.15em;color:var(--sub);display:block;marg
 .espMark.diag .ul{left:15%;top:15%}.espMark.diag .ur{left:85%;top:15%}
 .espMark.diag .dl{left:15%;top:85%}.espMark.diag .dr{left:85%;top:85%}
 .piece.flash{animation:hitflash .6s}
+/* SVGアイコン（絵文字の代替） */
+.ico{display:inline-block;width:1.05em;height:1.05em;vertical-align:-.17em;flex:none}
+.marker .ico{width:80%;height:80%;vertical-align:0}
+.espMark .ico{width:.95em;height:.95em;vertical-align:0;filter:drop-shadow(0 0 1.5px #04202e)}
+#muteBtn .ico{width:15px;height:15px;vertical-align:-3px}
+.zoneLabel .ico{width:8px;height:8px;vertical-align:0}
 @keyframes hitflash{
   0%,40%{filter:brightness(1.9) sepia(1) saturate(14) hue-rotate(-38deg) drop-shadow(0 0 9px #ff2a1a)}
   20%,60%{filter:none}
@@ -255,6 +261,48 @@ button.act.danger{border-color:var(--shu);color:#ffb9a8}
 .pCard .ap{font-size:11px;color:#8fb8e8}
 .pCard .d{font-size:10.5px;color:var(--sub);margin-top:3px;line-height:1.45}
 
+/* 駒選択（アイコンタイル型） */
+#modal.wide{max-width:680px}
+.pkTop{display:flex;gap:6px;align-items:center;margin-bottom:6px}
+#pieceSearch{flex:1;min-width:0;box-sizing:border-box;padding:7px 10px;border-radius:8px;
+  border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.08);color:#fff;font-size:14px}
+.pkChips{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px}
+.pkChip{font-size:11.5px;padding:3px 9px;border-radius:999px;border:1px solid #5a4626;background:var(--panel2);
+  color:#d9cdb2;cursor:pointer;user-select:none}
+.pkChip.on{background:var(--gold);color:#241404;border-color:var(--gold);font-weight:700}
+.pkChip i{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px;vertical-align:1px}
+.pickGrid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(56px,1fr));gap:5px}
+.pTile{position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;padding:5px 2px 4px;
+  border-radius:8px;background:var(--panel2);border:1px solid #4a3a20;cursor:pointer;user-select:none}
+.pTile:active{background:#3a2e1a}
+.pTile.sel{border-color:var(--gold);background:#3d301a;box-shadow:0 0 0 1px var(--gold) inset}
+.pTile.locked{opacity:.35;filter:grayscale(1);cursor:not-allowed}
+.pIcon{width:32px;height:34px;clip-path:polygon(50% 0%,96% 28%,84% 100%,16% 100%,4% 28%);
+  background:linear-gradient(180deg,#f4e3bd,#d9b87c 60%,#bb9354);color:#241404;font-weight:700;
+  display:flex;align-items:center;justify-content:center;font-size:17px;padding-top:3px;box-sizing:border-box;
+  box-shadow:inset 0 -3px 0 rgba(0,0,0,.3)}
+.pIcon.big{width:46px;height:49px;font-size:25px;flex:none}
+.pTile .pn{font-size:10.5px;color:#f0dfb4;line-height:1.1;white-space:nowrap}
+.pTile .pa{position:absolute;top:2px;right:3px;font-size:9px;color:#8fb8e8;font-weight:700}
+.pTile .pr{position:absolute;top:4px;left:4px;width:6px;height:6px;border-radius:50%}
+#pkDet{position:sticky;bottom:-6px;margin:8px -14px -6px;z-index:2}
+.pkDetail{padding:9px 14px 10px;
+  background:linear-gradient(180deg,#2c2416,#1f180e);border-top:1px solid #5a4626;display:flex;gap:10px;align-items:flex-start}
+.pkDetail .dx{flex:1;min-width:0}
+.pkDetail .dn{font-size:15px;color:#f0dfb4;font-weight:700}
+.pkDetail .dm{font-size:11px;color:#8fb8e8;margin-left:6px;font-weight:400}
+.pkDetail .dd{font-size:11.5px;color:var(--sub);line-height:1.5;margin-top:2px}
+.pkDetail .go{margin-top:6px;padding:6px 14px;font-size:13px}
+.pkDetail.empty{color:var(--sub);font-size:12px;justify-content:center}
+@media (max-width:480px){
+  .pickGrid2{grid-template-columns:repeat(auto-fill,minmax(48px,1fr));gap:4px}
+  .pTile{padding:4px 1px 3px}
+  .pIcon{width:27px;height:29px;font-size:14.5px}
+  .pTile .pn{font-size:9.5px}
+  .pkChip{font-size:11px;padding:2px 8px}
+  .pkDetail .dd{font-size:11px}
+}
+
 .choiceList{display:flex;flex-direction:column;gap:8px;padding:4px 0}
 .choiceList button{text-align:left}
 
@@ -277,13 +325,13 @@ button.act.danger{border-color:var(--shu);color:#ffb9a8}
     <div id="scoreBox">
       <div class="scorePill">自軍 <b id="scoreP">0</b>/2</div>
       <div class="scorePill enemy">敵軍 <b id="scoreE">0</b>/2</div>
-      <button id="muteBtn" title="効果音">♪</button>
+      <button id="muteBtn" title="効果音"></button>
       <button id="helpBtn" title="ルール">？</button>
     </div>
   </header>
   <div id="phaseBar">…</div>
   <div id="boardWrap"><div id="board"></div><div id="fxLayer"></div></div>
-  <div class="zoneLabel"><span>◀ 左陣</span><span>右陣 ▶</span></div>
+  <div class="zoneLabel" id="zoneLabel"><span>左陣</span><span>右陣</span></div>
   <div id="ctrl"></div>
   <div id="infoPanel">駒を選択すると詳細が表示されます。</div>
   <div id="logPanel"><div id="logHead">戦 況 記 録</div><div id="log"></div></div>
@@ -333,7 +381,7 @@ const PIECES = {
   // ===== 仮追加の駒（対人戦のみ・CPU未実装）=====
   inoshishi: {name:"猪",    k:"猪", ap:2, desc:"通常攻撃0.5ダメ。直進で2マス移動した直後の通常攻撃は2ダメ（途中で方向転換すると不発）"},
   kaizoku:   {name:"海賊",  k:"賊", ap:1, desc:"周囲8マスへ移動可。通常攻撃対象が自分よりHPが高い時（同数不可）、与ダメ+1（合計2）"},
-  taka:      {name:"鷹",    k:"鷹", ap:1, desc:"常時8方向へ移動可。行動力1消費で、駒や壁を1体飛び越えてすぐ先の空きマスに着地。着地の先にさらに飛び越えられる駒（壁）があれば、行動力を消費せず連続で飛び越えられる。通常攻撃可"},
+  taka:      {name:"鷹",    k:"鷹", ap:1, desc:"常時8方向へ移動可。行動力1消費で、駒や壁を1体飛び越えてすぐ先の空きマスに着地。着地した隣にさらに飛び越えられる駒（壁）があれば行動力+1を得て、その1で続けて飛び越えられる。通常攻撃可"},
   inseki:    {name:"隕石",  k:"隕", ap:1, noNormal:true, desc:"通常攻撃不可。スキル「流星群」：行動力を全消費して発動、その場から消え、次の自分ターン開始時に5×5の四隅と中心線の8箇所から1つを選んで着弾（そのマスへ移動）。着弾マスの駒を撃破、周囲十字4マスに0.5ダメージ。反動は周囲に当てた時1・当てなかった時0.5"},
   uchujin:   {name:"宇宙人",k:"宙", ap:1, desc:"スキル「転移」（行動力1＋HP0.5）：縦1列を選び、上か下を選んでその列の駒全てをその方向へ1マス移動させる（端・壁・塞がれている駒は動かない）。通常攻撃可"},
   ryoushu:   {name:"領主",  k:"領", ap:1, desc:"スキル「領地化」（行動力1）：周囲8マスの1つを自分の領地にする（自軍で最大1つ）。自分の領地には自分の駒しか入れない。通常攻撃可"},
@@ -494,11 +542,47 @@ function colorOk(owner, moveId, nr, nc){
   }
   return !same;
 }
+/* ---------- SVGアイコン（絵文字は使わず全てSVGで描画） ---------- */
+const ICON_PATHS={
+  learn:'<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1.1 2l.1.7h4.8l.1-.7c.1-.8.5-1.5 1.1-2A6 6 0 0 0 12 3z"/><path d="M12 7v3l-1.5 1.5M12 10l1.5 1.5" stroke-width="1.4"/>',
+  slow:'<path d="M12 4v14M6 12l6 6 6-6"/>',
+  ghost:'<path d="M5 20V11a7 7 0 0 1 14 0v9l-2.3-1.6L14.3 20 12 18.4 9.7 20l-2.4-1.6z"/><circle cx="9.5" cy="11" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="11" r="1.1" fill="currentColor" stroke="none"/>',
+  bless:'<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" fill="currentColor" stroke="none"/><path d="M18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z" fill="currentColor" stroke="none"/>',
+  hide:'<path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" stroke-dasharray="2.5 2.2"/><circle cx="12" cy="12" r="2.6"/><path d="M4 4l16 16"/>',
+  swords:'<path d="M4 4l10 10M20 4L10 14"/><path d="M12.5 15.5l-3 3M11.5 15.5l3 3M7 17l-3 3M17 17l3 3"/><path d="M4 4h3M4 4v3M20 4h-3M20 4v3"/>',
+  flame:'<path d="M12 21c-3.9 0-6.5-2.6-6.5-6.2 0-3.4 2.4-5.4 3.6-8.3.5 1.8 1.6 2.9 2.6 3.4C12.2 6.6 13.5 4.2 15.6 3c-.3 2.6.6 4.4 1.8 6 1 1.4 1.6 3 1.6 4.8 0 4.2-3 7.2-7 7.2z"/><path d="M12 21c-1.6 0-2.8-1.2-2.8-2.8 0-1.7 1.4-2.6 2-4 .9 1 2.6 2 2.6 4 0 1.6-.8 2.8-1.8 2.8z" fill="currentColor" stroke="none"/>',
+  shield:'<path d="M12 3l7 2.8v5.4c0 4.5-3 8-7 9.8-4-1.8-7-5.3-7-9.8V5.8z"/><path d="M12 3v18" stroke-width="1.3"/>',
+  crown:'<path d="M4 18h16M5 18l-1.5-10 5 4L12 5l3.5 7 5-4L19 18z"/>',
+  orb:'<circle cx="12" cy="12" r="7.5" fill="currentColor" stroke="none" opacity=".85"/><circle cx="9.5" cy="9.5" r="2" fill="#fff" stroke="none" opacity=".45"/>',
+  meteor:'<circle cx="15.5" cy="15.5" r="4.5" fill="currentColor" stroke="none"/><path d="M3 3l8.5 8.5M7 3l6.5 6.5M3 7l6.5 6.5" stroke-width="1.8"/>',
+  bomb:'<circle cx="10.5" cy="14" r="7.5" fill="currentColor" stroke="none"/><path d="M14.5 9.5l2.5-2.5"/><path d="M17 7c.5-1.8 2-2.6 3.5-2" stroke-width="1.6"/><circle cx="8" cy="12" r="1.5" fill="#fff" stroke="none" opacity=".35"/>',
+  cross:'<path d="M6 6l12 12M18 6L6 18" stroke-width="3"/>',
+  dice:'<rect x="4" y="4" width="16" height="16" rx="3.5"/><circle cx="8.5" cy="8.5" r="1.4" fill="currentColor" stroke="none"/><circle cx="15.5" cy="8.5" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="8.5" cy="15.5" r="1.4" fill="currentColor" stroke="none"/><circle cx="15.5" cy="15.5" r="1.4" fill="currentColor" stroke="none"/>',
+  undo:'<path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
+  soundOn:'<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
+  soundOff:'<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor"/><path d="M16 9.5l5 5M21 9.5l-5 5"/>',
+  tri:'<path d="M12 4l8 14H4z" fill="currentColor" stroke="none"/>',
+  corner:'<path d="M4 4h14L4 18z" fill="currentColor" stroke="none"/>'
+};
+/* name のアイコンをインラインSVGで返す。rot で回転（度） */
+function icon(name,rot){
+  const p=ICON_PATHS[name]; if(!p)return "";
+  const tf=rot?` style="transform:rotate(${rot}deg)"`:"";
+  return `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"${tf}>${p}</svg>`;
+}
+/* ログ用：本文中の [[name]] をSVGアイコンに置き換えて要素へ追加（本文はテキストとして安全に挿入） */
+function appendIconText(el,msg){
+  const parts=String(msg).split(/\[\[(\w+)\]\]/);
+  for(let i=0;i<parts.length;i++){
+    if(i%2===0){ if(parts[i])el.appendChild(document.createTextNode(parts[i])); }
+    else if(ICON_PATHS[parts[i]]){ const sp=document.createElement("span"); sp.innerHTML=icon(parts[i]); el.appendChild(sp.firstChild); }
+  }
+}
 function log(msg,cls,priv){
   if(typeof NET!=="undefined"&&NET.on&&!NET.applying&&!priv)NET.logBuf.push({m:msg,c:cls||"s"});
   const d=document.createElement("div");
   d.className=cls==="p"?"lp":cls==="e"?"le":"ls";
-  d.textContent=msg;
+  appendIconText(d,msg);
   const L=$("#log"); L.appendChild(d); L.scrollTop=L.scrollHeight;
 }
 function fmt(v){return Number.isInteger(v)?String(v):v.toFixed(1);}
@@ -658,6 +742,7 @@ function cellName(r,c){
 function logMove(p,fromR,fromC){
   if(fromR===p.r&&fromC===p.c)return; // 動いていなければ記録しない
   if(p.flags&&p.flags.invisible)return; // 透明中（忍者）の移動先は相手に知られない＝ログに出さない
+  learnRecordMove(p,fromR);
   log(`${pieceLabel(p)}が ${cellName(fromR,fromC)} → ${cellName(p.r,p.c)} へ移動`, p.owner==="P"?"p":"e");
 }
 /* 駒に現在ついているバフ・デバフの一覧（情報パネル表示用） */
@@ -665,17 +750,17 @@ function pieceStatuses(p){
   const out=[];
   const f=p.flags||{};
   // デバフ
-  if(f.apCut)      out.push({label:"⬇ 減速（次ターン行動力-1）",cls:"deb"});
-  if(f.slowedVisual)out.push({label:"⬇ 減速中（行動力-1）",cls:"deb"});
-  if(f.noAttack)   out.push({label:"👻 憑依（通常攻撃不可）",cls:"deb"});
+  if(f.apCut)      out.push({label:`${icon("slow")} 減速（次ターン行動力-1）`,cls:"deb"});
+  if(f.slowedVisual)out.push({label:`${icon("slow")} 減速中（行動力-1）`,cls:"deb"});
+  if(f.noAttack)   out.push({label:`${icon("ghost")} 憑依（通常攻撃不可）`,cls:"deb"});
   // バフ・特殊
-  if(f.mikoBuff)   out.push({label:"✨ 巫女の加護（行動力+1・再行動）",cls:"buf"});
-  if(f.invisible)  out.push({label:"🌫 透明化（攻撃3・被弾無効）",cls:"buf"});
-  if(f.heroBoost)  out.push({label:"⚔ 覚醒（近接攻撃3・回復1）",cls:"buf"});
-  if(f.phoenix)    out.push({label:"🔥 不死（一度だけ蘇生）",cls:"buf"});
-  if(f.block)      out.push({label:`🛡 防御中（${f.block.r+1},${f.block.c+1}方向）`,cls:"buf"});
-  if(p.type==="yusha"&&f.maouId&&!f.heroBoost)out.push({label:"👑 魔王を指定済み",cls:"buf"});
-  if(isPlayerMaou(p))out.push({label:"🟣 魔王（あなたが指定）",cls:"buf"});
+  if(f.mikoBuff)   out.push({label:`${icon("bless")} 巫女の加護（行動力+1・再行動）`,cls:"buf"});
+  if(f.invisible)  out.push({label:`${icon("hide")} 透明化（攻撃3・被弾無効）`,cls:"buf"});
+  if(f.heroBoost)  out.push({label:`${icon("swords")} 覚醒（近接攻撃3・回復1）`,cls:"buf"});
+  if(f.phoenix)    out.push({label:`${icon("flame")} 不死（一度だけ蘇生）`,cls:"buf"});
+  if(f.block)      out.push({label:`${icon("shield")} 防御中（${f.block.r+1},${f.block.c+1}方向）`,cls:"buf"});
+  if(p.type==="yusha"&&f.maouId&&!f.heroBoost)out.push({label:`${icon("crown")} 魔王を指定済み`,cls:"buf"});
+  if(isPlayerMaou(p))out.push({label:`${icon("orb")} 魔王（あなたが指定）`,cls:"buf"});
   return out;
 }
 
@@ -825,11 +910,16 @@ function afterShatter(cb){
 }
 
 function makePiece(type,owner,r,c){
+  if(owner==="E" && type!=="kemono" && typeof G!=="undefined" && G){
+    if(!G.eTypesUsed)G.eTypesUsed=[];
+    if(!G.eTypesUsed.includes(type))G.eTypesUsed.push(type);
+  }
   const baseHp = type==="kemono" ? 1 : (PIECES[type].maxHp || 3);
   return {id:pid++,type,owner,r,c,hp:baseHp, maxHp:(PIECES[type].maxHp||3),
     ap:PIECES[type].ap,maxAp:PIECES[type].ap,dead:false,
     flags:{},spawn:true};
 }
+
 
 /* =========================================================
    オンライン対戦（PeerJS / ルームコード方式）
@@ -1151,6 +1241,7 @@ function placePlayerPiece(r,c){
   const p=makePiece(type,"P",r,c);
   G.pieces.push(p);
   G.setupCount.P++;
+  learnRecordPick(type);
   sfx("place");
   if(type!=="sagishi")log(`自軍：${PIECES[type].name}を配置`,"p"); // 詐欺師は偽装先確定後にログ
   UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
@@ -1256,7 +1347,7 @@ function healPiece(p,amount){
 function resolveMeteorImpact(meteorId, ir, ic){
   const p=byId(meteorId);
   G.meteors=(G.meteors||[]).filter(m=>m.id!==meteorId);
-  log(`☄ 隕石が ${cellName(ir,ic)} に着弾！`,p&&p.owner==="P"?"p":"e");
+  log(`[[meteor]] 隕石が ${cellName(ir,ic)} に着弾！`,p&&p.owner==="P"?"p":"e");
   sfx("bomb");
   spawnShatterAt(ir,ic,p?p.owner:"P");
   // 着弾マスが相手の領地なら破壊する
@@ -1297,6 +1388,7 @@ function killPiece(p,src,kind){
     return;
   }
   p.dead=true;
+  learnRecordKill(p,src);
   spawnShatterAt(p.r,p.c,p.owner); // 砕け散る演出
   sfx("death");
   log(`◆ ${pieceLabel(p)}は倒れた！`,p.owner==="P"?"e":"p");
@@ -1340,6 +1432,7 @@ function killPiece(p,src,kind){
   const scorer=opp(p.owner);
   G.kills[scorer]++;
   updateScore();
+  if(p.owner==="E" && G.kills.P>G.kills.E) learnOnCpuLoss(p); // CPUが撃破数で負けた → 敗着を分析・記憶
   if(G.kills[scorer]>=2){ G.over=true; afterShatter(()=>endGame(scorer)); return; }
   G.respawnQueue.push(p.owner);
 }
@@ -1355,12 +1448,15 @@ function endGame(winner){
   }
   UI={mode:"over",sel:null,targets:new Set(),ability:null,extra:{}};
   sfx(winner==="P"?"win":"lose");
+  const learnedNow=learnActive()&&!G.learnDone;
+  learnRecordGameEnd(winner);
   setPhaseBar(winner==="P"?'<span class="turnP">勝利！</span>':'<span class="turnE">敗北…</span>');
   render();
   setTimeout(()=>{
     openModal("勝敗決す",
       `<div id="overBanner" class="${winner==="P"?"":"lose"}">${winner==="P"?"勝 利":"敗 北"}</div>
-       <p style="text-align:center;color:var(--sub)">自軍 ${G.kills.P} — ${G.kills.E} 敵軍</p>`,
+       <p style="text-align:center;color:var(--sub)">自軍 ${G.kills.P} — ${G.kills.E} 敵軍</p>
+       ${learnedNow?`<p style="text-align:center;color:var(--sub);font-size:12px">${icon("learn")} CPUがこの対局を学習しました（記録${learnAgg().games}戦・記憶した敗着${learnAgg().lessons}局面）</p>`:""}`,
       [{label:"もう一度戦う",cls:"primary",fn:()=>{closeModal();showStart();}}]);
   },600);
 }
@@ -1410,6 +1506,7 @@ function placeRespawn(r,c){
   const {type,cont}=UI.extra;
   const p=makePiece(type,"P",r,c);
   G.pieces.push(p);
+  learnRecordPick(type);
   sfx("place");
   if(type!=="sagishi")log(`自軍：${PIECES[type].name}を召喚`,"p"); // 詐欺師は偽装先確定後にログ
   UI={mode:"idle",sel:null,targets:new Set(),ability:null,extra:{}};
@@ -1438,7 +1535,8 @@ function aiRespawn(){
   // 評価対象の駒タイプ（戦術的に意味のある候補＋汎用アタッカー）
   let CANDIDATES=["kenshi","senshi","kiba","souhei","kyuhei","sogeki","kyuketsuki",
                     "esper","jutsushi","akuryo","tatehei","fushicho","yusha","bakudan",
-                    "ninja","boken","wanashi","kusushi","miko","seishoku","majo","chokyo","jusoshi","gunshi"];
+                    "ninja","boken","wanashi","kusushi","miko","seishoku","majo","chokyo","jusoshi","gunshi",
+                    "inoshishi","kaizoku","taka"];  // 戦闘・機動が充実した新規駒も選出候補に
   if(alive("E").some(p=>p.type==="yusha"))CANDIDATES=CANDIDATES.filter(t=>t!=="yusha"); // 勇者は1駒まで
   // プレイヤーの駒情報
   const foes=alive("P").filter(f=>!f.flags.invisible);
@@ -1568,7 +1666,14 @@ function aiEvalRespawn(type,r,c,threat,foes,inPeril){
     // 相手の遠距離には機動力で寄せる
     if(ft==="kyuhei"||ft==="sogeki"){
       if(type==="kiba"||type==="ninja"||type==="boken")score+=60;
+      if(type==="kaizoku"||type==="taka")score+=55; // 8方向機動で射線外から寄れる
+      if(type==="inoshishi")score+=35;               // 直進突進で一気に詰める
       if(type==="tatehei")score+=30;
+    }
+    // 相手の盾兵には、跳躍で回り込める鷹・8方向の海賊が有効
+    if(ft==="tatehei"){
+      if(type==="taka")score+=40;
+      if(type==="kaizoku"||type==="kiba")score+=30;
     }
     // 相手の強襲には迎え撃つ近接・盾
     if(ft==="kiba"||ft==="ninja"||ft==="boken"){
@@ -1595,6 +1700,7 @@ function aiEvalRespawn(type,r,c,threat,foes,inPeril){
     score-=md*3;
   }
   // 微小なランダムで硬直を防ぐ
+  score+=learnPieceBonus(type); // 学習：この端末での戦績が良い駒を優先
   score+=Math.random()*8;
   return score;
 }
@@ -1892,6 +1998,7 @@ function performAttack(attacker,target,kind){
    ========================================================= */
 function startPlayerTurn(){
   if(G.over)return;
+  learnSnap("P");
   G.turn="P"; G.phase="action";
   G.slotsLeft=1; G.currentActor=null; G.attackUsed=false; G.acted=false;
   for(const p of alive("P")){
@@ -1994,7 +2101,7 @@ function finishPlayerTurn(){
     if(valid.length>0)cells=valid;
     // 着弾地点は必ず手動で選択する（オンライン・CPU戦とも）。
     UI={mode:"meteorTargetEnd",sel:null,targets:new Set(cells.map(c=>c.r+","+c.c)),ability:{meteorId:readyMeteor.id},extra:{}};
-    setPhaseBar('<span class="turnP">☄ 流星群が着弾します — 着弾地点を選択してください（赤いマス）</span>');
+    setPhaseBar('<span class="turnP">'+icon("meteor")+' 流星群が着弾します — 着弾地点を選択してください（赤いマス）</span>');
     render();
     return; // 着弾地点の選択後に finishPlayerTurnCore() でターン終了処理を続ける
   }
@@ -2672,8 +2779,303 @@ const AI_WEIGHTS={
   kenshi:6, kyuhei:4, tatehei:4, kiba:6, senshi:6, jutsushi:3, wanashi:3,
   ninja:4, kusushi:3, chokyo:2, gunshi:2, souhei:5, fushicho:3, jusoshi:3,
   miko:2, esper:2, boken:3, kyuketsuki:5, sogeki:4, seishoku:3, majo:3,
-  bakudan:3, yusha:4, akuryo:3
+  bakudan:3, yusha:4, akuryo:3,
+  inoshishi:5, kaizoku:5, taka:5   // 新規の戦闘・機動駒
 };
+/* =========================================================
+   CPUの学習（端末内保存）
+   ・localStorageの固定キーに保存するため、HTMLを更新しても同じURLなら消えない
+   ・直近30戦ぶんの対戦記録を保持（古いものから削除）。統計はこの30戦から集計
+   ・CPUが撃破数で負けた瞬間、倒れた駒の過去15手の盤面から「決定的だった局面」と
+     その時CPUが指した「敗着」を特定して記憶。同じ／近い盤面ではその手を候補から外す
+   ========================================================= */
+const LEARN_KEY="koujousen.cpuLearn";
+const LEARN_MAX_GAMES=30;   // 対戦記録の保持数
+const LEARN_PLY_MAX=15;     // 敗着分析で遡る手数
+const LEARN_NEAR_MAX=4;     // 近似盤面とみなす盤面差の上限
+let LEARN=null, LEARN_AGG=null;
+let LEARN_FX={advMul:1, danger:{}, conf:0};   // 探索で使う学習係数（AI手番開始時に更新）
+function learnDefault(){return {v:2,hist:[]};}
+function learnNewRec(){return {t:Date.now(),res:"",kP:0,kE:0,pPick:{},pKill:{},eRes:{},pAdv:0,pRet:0,eTypes:[],lessons:[]};}
+function learnFixRec(r){
+  // 項目が増減しても壊れないよう、型が合う項目だけ取り込む
+  const b=learnNewRec();
+  for(const k in b){ const v=r[k]; if(v!==undefined && v!==null && typeof v===typeof b[k] && Array.isArray(v)===Array.isArray(b[k])) b[k]=v; }
+  if(r.legacy){ b.legacy=true; b.n=+r.n||0; b.cpuWins=+r.cpuWins||0; b.pWins=+r.pWins||0; }
+  b.lessons=b.lessons.filter(l=>l&&Array.isArray(l.b)&&l.mv&&typeof l.mv.t==="string");
+  return b;
+}
+function learnLoad(){
+  if(LEARN)return LEARN;
+  const L=learnDefault();
+  let d=null;
+  try{ d=JSON.parse(localStorage.getItem(LEARN_KEY)||"null"); }catch(e){}
+  if(d&&typeof d==="object"){
+    if(Array.isArray(d.hist)){
+      L.hist=d.hist.filter(r=>r&&typeof r==="object").map(learnFixRec).slice(-LEARN_MAX_GAMES);
+    }else if(typeof d.games==="number"&&d.games>0){
+      // 旧形式（累計のみ）からの引き継ぎ：1件の「過去の累計」記録として保持
+      L.hist.push(learnFixRec({legacy:true,n:Math.min(d.games,LEARN_MAX_GAMES),cpuWins:d.cpuWins,pWins:d.pWins,
+        pPick:d.pPick,pKill:d.pKill,eRes:d.eRes,pAdv:d.pAdv,pRet:d.pRet}));
+    }
+  }
+  LEARN=L; LEARN_AGG=null; return L;
+}
+function learnSave(){
+  LEARN_AGG=null;
+  const L=learnLoad();
+  for(let tries=0;tries<6;tries++){
+    try{ localStorage.setItem(LEARN_KEY,JSON.stringify(L)); return; }
+    catch(e){
+      // 容量不足：古い記録の盤面履歴から削っていく
+      const r=L.hist.find(h=>h.lessons.some(l=>l.plies));
+      if(r){ for(const l of r.lessons)delete l.plies; continue; }
+      if(L.hist.length>1){ L.hist.shift(); continue; }
+      return;
+    }
+  }
+}
+function learnActive(){ return !(typeof NET!=="undefined"&&NET.on); }  // CPU戦のみ学習
+function learnInc(obj,k,n){ obj[k]=(obj[k]||0)+(n||1); }
+/* 今の対局の記録（初回アクセス時に作成して履歴へ追加。30戦を超えたら古いものを削除） */
+function learnCur(){
+  const L=learnLoad();
+  if(!G.learnRec || !L.hist.includes(G.learnRec)){
+    // 途中で放棄された中身のない記録は掃除
+    L.hist=L.hist.filter(r=>r.legacy||r.res||r.lessons.length);
+    G.learnRec=learnNewRec();
+    L.hist.push(G.learnRec);
+    while(L.hist.length>LEARN_MAX_GAMES)L.hist.shift();
+  }
+  return G.learnRec;
+}
+/* 30戦ぶんの記録から統計を集計 */
+function learnAgg(){
+  if(LEARN_AGG)return LEARN_AGG;
+  const L=learnLoad();
+  const A={games:0,cpuWins:0,pWins:0,pPick:{},pKill:{},eRes:{},pAdv:0,pRet:0,lessons:0,records:L.hist.length};
+  const er=t=>A.eRes[t]||(A.eRes[t]={g:0,w:0,k:0,d:0});
+  for(const r of L.hist){
+    const done=(r.res==="E"||r.res==="P");
+    if(r.legacy){ A.games+=r.n; A.cpuWins+=r.cpuWins; A.pWins+=r.pWins; }
+    else if(done){ A.games++; if(r.res==="E")A.cpuWins++; else A.pWins++; }
+    for(const t in r.pPick)learnInc(A.pPick,t,r.pPick[t]);
+    for(const t in r.pKill)learnInc(A.pKill,t,r.pKill[t]);
+    A.pAdv+=r.pAdv; A.pRet+=r.pRet;
+    for(const t in r.eRes){ const s=r.eRes[t]||{}, a=er(t); a.k+=s.k||0; a.d+=s.d||0; a.g+=s.g||0; a.w+=s.w||0; }
+    if(done&&!r.legacy) for(const t of r.eTypes){ const a=er(t); a.g++; if(r.res==="E")a.w++; }
+    A.lessons+=r.lessons.length;
+  }
+  return LEARN_AGG=A;
+}
+/* 学習度：対戦数に応じて0→1へ（10戦で最大）。対戦するほど学習結果を強く使う */
+function learnConf(){ return Math.min(1,learnAgg().games/10); }
+function learnRecordPick(type){
+  if(!learnActive()||(typeof randomDeal!=="undefined"&&randomDeal))return;
+  learnInc(learnCur().pPick,type); learnSave();
+}
+function learnRecordKill(victim,src){
+  if(!learnActive()||!src||!victim||src.owner===victim.owner)return;
+  if(victim.type==="kemono"||src.type==="kemono")return;
+  const R=learnCur(), er=t=>R.eRes[t]||(R.eRes[t]={k:0,d:0});
+  if(victim.owner==="E"){ learnInc(R.pKill,src.type); er(victim.type).d++; }
+  else { er(src.type).k++; }
+  learnSave();
+}
+function learnRecordMove(p,fr){
+  if(!learnActive()||!p||p.owner!=="P")return;
+  const R=learnCur();
+  if(p.r<fr)R.pAdv++; else if(p.r>fr)R.pRet++;   // 上（敵陣側）へ＝前進
+}
+function learnRecordGameEnd(winner){
+  if(!learnActive()||G.learnDone)return;
+  G.learnDone=true;
+  const R=learnCur();
+  R.res=winner; R.kP=G.kills.P; R.kE=G.kills.E;
+  R.eTypes=(G.eTypesUsed||[]).slice();
+  learnSave();
+}
+/* CPU駒の戦績ボーナス（よく勝つ／よく倒す駒を選びやすく） */
+function learnPieceBonus(type){
+  const r=learnAgg().eRes[type]; if(!r)return 0;
+  let perf=((r.k-r.d)+(2*r.w-r.g))/(r.g+3);
+  perf=Math.max(-1.5,Math.min(1.5,perf));
+  return perf*22*learnConf();
+}
+/* あなたが選びそうな駒（よく使う駒＋CPUをよく倒した駒）を重み付きで返す */
+function learnPredictedFoes(){
+  const A=learnAgg(), w={};
+  let tp=0; for(const t in A.pPick)tp+=A.pPick[t];
+  let tk=0; for(const t in A.pKill)tk+=A.pKill[t];
+  for(const t in A.pPick) w[t]=(w[t]||0)+A.pPick[t]/Math.max(1,tp);
+  for(const t in A.pKill) w[t]=(w[t]||0)+0.6*A.pKill[t]/Math.max(1,tk);
+  return Object.keys(w).filter(t=>PIECES[t]).map(t=>({type:t,w:w[t]})).sort((a,b)=>b.w-a.w).slice(0,4);
+}
+/* 探索で使う学習係数を更新（AI手番開始時） */
+function learnRefreshFX(){
+  const A=learnAgg(), conf=learnConf();
+  const mv=A.pAdv+A.pRet;
+  let advMul=1;
+  if(mv>=30){
+    const aggr=A.pAdv/mv;
+    if(aggr>0.62)advMul=1-0.15*conf;        // 攻めてくる相手：待ち構えて迎撃寄りに
+    else if(aggr<0.42)advMul=1+0.15*conf;   // 守る相手：こちらから詰める
+  }
+  let tk=0; for(const t in A.pKill)tk+=A.pKill[t];
+  const danger={};
+  if(tk>=3){ for(const t in A.pKill) danger[t]=Math.min(0.5,A.pKill[t]/tk)*conf; }
+  LEARN_FX={advMul,danger,conf};
+}
+
+/* ---------- 敗着の記憶 ---------- */
+/* 手番開始時の盤面を記録（直近15手＋現在） */
+function learnSnap(side){
+  if(!learnActive()||!G||G.over)return;
+  if(!G.lrnPly)G.lrnPly=[];
+  G.lrnPly.push({side, st:ssFromGame("P"), mv:null});   // 分析用に完全情報で保存
+  while(G.lrnPly.length>LEARN_PLY_MAX+1)G.lrnPly.shift();
+}
+/* CPUがその手番で指した手を記録 */
+function learnNoteCpuMove(plan){
+  if(!learnActive()||!plan||!G.lrnPly||!G.lrnPly.length)return;
+  const ply=G.lrnPly[G.lrnPly.length-1];
+  if(ply.side!=="E"||ply.mv)return;
+  const p=byId(plan.pieceId); if(!p)return;
+  const d=(plan.path&&plan.path.length)?plan.path[plan.path.length-1]:[p.r,p.c];
+  ply.mv={pid:p.id,t:p.type,fr:p.r,fc:p.c,dr:d[0],dc:d[1],ab:plan.ability?plan.ability.kind:"-"};
+}
+/* 盤面の記号化（CPUから見える駒のみ：透明化した相手の忍者は除く） */
+function learnSig(st){
+  return st.ps.filter(p=>!(p.o==="P"&&p.invis)).map(p=>[p.o==="E"?1:0,p.t,p.r,p.c,p.hp])
+    .sort((a,b)=>(a[0]-b[0])||(a[1]<b[1]?-1:a[1]>b[1]?1:0)||(a[2]-b[2])||(a[3]-b[3]));
+}
+function learnMirrorSig(b){ return b.map(x=>[x[0],x[1],x[2],5-x[3],x[4]]); }
+function learnMirrorMv(m){ return {...m,fc:5-m.fc,dc:5-m.dc}; }
+function learnSameBoard(a,b){ return a.length===b.length && a.every((x,i)=>x[0]===b[i][0]&&x[1]===b[i][1]&&x[2]===b[i][2]&&x[3]===b[i][3]&&x[4]===b[i][4]); }
+/* 盤面差：同じ陣営・同じ駒種どうしを近い順に対応づけ、位置ずれ＋HP差を合計。対応しない駒は1体3 */
+function learnBoardDist(a,b,cap){
+  const used=new Array(b.length).fill(false);
+  let d=0;
+  for(const x of a){
+    let bi=-1,bd=1e9;
+    for(let i=0;i<b.length;i++){
+      if(used[i])continue; const y=b[i];
+      if(y[0]!==x[0]||y[1]!==x[1])continue;
+      const dd=Math.abs(y[2]-x[2])+Math.abs(y[3]-x[3])+Math.abs(y[4]-x[4]);
+      if(dd<bd){bd=dd;bi=i;}
+    }
+    if(bi<0)d+=3; else {used[bi]=true; d+=bd;}
+    if(d>cap)return d;
+  }
+  for(const u of used)if(!u)d+=3;
+  return d;
+}
+/* CPUが撃破数で負けた時：倒れた駒の過去15手から決定的な局面と敗着を特定して記憶 */
+function learnOnCpuLoss(victim){
+  if(!learnActive()||!G.lrnPly||!G.lrnPly.length)return;
+  const plies=G.lrnPly.slice(-(LEARN_PLY_MAX+1));
+  // CPUの手の直後、その駒が「相手の次の手番で討ち取られうる」状態になっていたか
+  const lethalAfter=i=>{
+    const nx=plies[i+1]; if(!nx)return true;              // その手番中に倒れた
+    const v=nx.st.ps.find(x=>x.id===victim.id); if(!v)return true;
+    const dg=ssPlayerThreat(ssClone(nx.st))[v.r+","+v.c]||0;
+    return dg>=v.hp-1e-9;
+  };
+  // 直近から遡り、危険な状態が続いている区間の「最初のCPUの手」＝決定的な局面
+  let di=-1;
+  for(let i=plies.length-1;i>=0;i--){
+    const pl=plies[i];
+    if(!pl.st.ps.some(x=>x.id===victim.id))break;          // まだ召喚されていない
+    if(pl.side!=="E"||!pl.mv)continue;
+    if(lethalAfter(i)){ di=i; continue; }
+    if(di<0)di=i;                                          // 予測外の撃破：直前のCPUの手を敗着とみなす
+    break;
+  }
+  if(di<0)return;
+  const pl=plies[di];
+  const b=learnSig(pl.st);
+  const R=learnCur();
+  // 同じ盤面・同じ手が既に記憶済みなら重みを上げるだけ
+  for(const r of learnLoad().hist)for(const l of r.lessons){
+    if(l.mv.t===pl.mv.t&&l.mv.fr===pl.mv.fr&&l.mv.fc===pl.mv.fc&&l.mv.dr===pl.mv.dr&&l.mv.dc===pl.mv.dc&&l.mv.ab===pl.mv.ab&&learnSameBoard(l.b,b)){
+      l.n=Math.min(9,(l.n||1)+1); learnSave();
+      log(`敵軍AIは同じ敗着を再び記憶に刻んだ（${PIECES[victim.type].name}の喪失）`,"s");
+      return;
+    }
+  }
+  R.lessons.push({b, mv:pl.mv, vt:victim.type, n:1, kP:G.kills.P, kE:G.kills.E,
+    back:plies.length-1-di,                                 // 撃破の何手前の局面か
+    plies:plies.map(x=>({s:x.side,b:learnSig(x.st),mv:x.mv}))});  // 撃破までの15手の盤面
+  learnSave();
+  const mvTxt=`${PIECES[pl.mv.t].name}の${cellName(pl.mv.fr,pl.mv.fc)}→${cellName(pl.mv.dr,pl.mv.dc)}`;
+  log(`[[learn]] 敵軍AIは敗着を記憶した：${plies.length-1-di}手前の${mvTxt}`,"s");
+}
+/* 現局面に当てはまる記憶（敗着）を列挙：同じ盤面・近い盤面・左右反転した盤面 */
+function learnLessonsFor(root){
+  if(!learnActive())return [];
+  const cur=learnSig(root);
+  const out=[];
+  for(const r of learnLoad().hist)for(const l of r.lessons){
+    for(const mir of [false,true]){
+      const mv=mir?learnMirrorMv(l.mv):l.mv;
+      // 敗着を指した駒が同じ位置に居ることが前提
+      const mover=root.ps.find(p=>p.o==="E"&&p.t===mv.t&&p.r===mv.fr&&p.c===mv.fc);
+      if(!mover)continue;
+      const d=learnBoardDist(mir?learnMirrorSig(l.b):l.b,cur,LEARN_NEAR_MAX);
+      if(d>LEARN_NEAR_MAX)continue;
+      const sim=d===0?1:d<=1?0.7:d<=2?0.5:d<=3?0.35:0.2;
+      out.push({pid:mover.id,dr:mv.dr,dc:mv.dc,ab:mv.ab,sim,exact:d===0,n:Math.min(3,l.n||1)});
+    }
+  }
+  return out;
+}
+/* 候補手に対する敗着ペナルティ（同一盤面の敗着は事実上候補から除外） */
+function learnLessonPenalty(lessons,pid,dr,dc,ab,exactPen,nearPen){
+  let pen=0;
+  for(const l of lessons){
+    if(l.pid!==pid||l.dr!==dr||l.dc!==dc||l.ab!==(ab||"-"))continue;
+    pen=Math.max(pen, l.exact?exactPen:nearPen*l.sim*l.n);
+  }
+  return pen;
+}
+function learnSummaryHtml(){
+  const A=learnAgg();
+  const lv=Math.round(learnConf()*100);
+  const fav=learnPredictedFoes().slice(0,3).map(x=>PIECES[x.type].name).join("・")||"—";
+  return `<div id="learnBox" style="margin:4px 0 10px;padding:8px 10px;background:var(--panel2);border-radius:8px;font-size:12.5px;line-height:1.6">
+    <div>${icon("learn")} CPUの学習：<b style="color:var(--gold)">${A.games}戦</b>（CPU ${A.cpuWins}勝 ／ あなた ${A.pWins}勝）・学習度 ${lv}%</div>
+    <div style="color:var(--sub)">記憶している敗着：${A.lessons}局面（直近${LEARN_MAX_GAMES}戦まで保持）</div>
+    <div style="color:var(--sub)">あなたの傾向として把握している駒：${fav}</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+      <button class="act" id="lrnExport" style="font-size:11.5px;padding:5px 10px">学習データを書き出す</button>
+      <button class="act" id="lrnImport" style="font-size:11.5px;padding:5px 10px">読み込む</button>
+      <button class="act" id="lrnReset" style="font-size:11.5px;padding:5px 10px">リセット</button>
+      <input type="file" id="lrnFile" accept="application/json,.json" style="display:none">
+    </div></div>`;
+}
+function learnBindButtons(){
+  const ex=$("#lrnExport"), im=$("#lrnImport"), rs=$("#lrnReset"), fi=$("#lrnFile");
+  if(ex)ex.onclick=()=>{
+    const blob=new Blob([JSON.stringify(learnLoad())],{type:"application/json"});
+    const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="koujousen-cpu-learn.json";
+    document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);
+  };
+  if(im&&fi){
+    im.onclick=()=>fi.click();
+    fi.onchange=()=>{
+      const f=fi.files&&fi.files[0]; if(!f)return;
+      f.text().then(txt=>{
+        try{ const d=JSON.parse(txt); if(!d||typeof d!=="object"||!(Array.isArray(d.hist)||typeof d.games==="number"))throw 0;
+          localStorage.setItem(LEARN_KEY,JSON.stringify(d)); LEARN=null; learnLoad(); learnSave(); showStart();
+        }catch(e){ alert("学習データを読み込めませんでした"); }
+      });
+    };
+  }
+  if(rs)rs.onclick=()=>{
+    if(!confirm("CPUの学習データを消去しますか？"))return;
+    LEARN=learnDefault(); learnSave(); showStart();
+  };
+}
 function aiWeightedPick(exclude){
   const pool=PICKABLE.filter(t=>!(exclude||[]).includes(t));
   let total=0;for(const t of pool)total+=(AI_WEIGHTS[t]||2);
@@ -2735,6 +3137,41 @@ function aiPickRespawnType(){
   return best||aiWeightedPick([]);
 }
 /* 初手配置：今出ている駒（自分・相手）を考慮して、この手番で置く駒種を選ぶ */
+function aiSetupCounter(type,ft){
+  let s=0;
+  const isRanged=(type==="kyuhei"||type==="sogeki");
+  // 相手が後手でも殴り勝てる近接（剣士・戦士・吸血鬼）を置いてきたら、
+  // 遠距離・盾・妨害で対抗する駒を高評価
+  if(["kenshi","senshi","kyuketsuki","fushicho"].includes(ft)){
+    if(isRanged)s+=45;                    // 遠距離で触らず削る
+    if(type==="tatehei")s+=35;            // 盾で受ける
+    if(type==="jutsushi"||type==="akuryo")s+=30; // 減速・攻撃封じ
+    if(type==="esper")s+=25;              // 位置をずらす
+  }
+  // 相手が遠距離（弓・狙撃）を置いたら、機動力・盾・妨害で寄せる
+  if(ft==="kyuhei"||ft==="sogeki"){
+    if(type==="kiba"||type==="ninja"||type==="boken")s+=35; // 素早く距離を詰める
+    if(type==="kaizoku"||type==="taka")s+=35; // 8方向・飛び越えで射線外から寄る
+    if(type==="inoshishi")s+=20;
+    if(type==="tatehei")s+=25;
+    if(type==="akuryo"||type==="esper")s+=25;
+  }
+  // 相手が超能力者・魔女など盤面操作系なら、粘る駒や妨害で対応
+  if(ft==="esper"||ft==="majo"){
+    if(type==="fushicho")s+=20;
+    if(type==="jutsushi")s+=18;
+  }
+  // 相手が勇者を置いたら（将来の覚醒に備え）粘り・妨害を少し評価
+  if(ft==="yusha"){
+    if(type==="fushicho"||type==="tatehei")s+=18;
+  }
+  // 盾兵には飛び越え・8方向機動で背後を取る
+  if(ft==="tatehei"){
+    if(type==="taka")s+=30;
+    if(type==="kaizoku"||type==="kiba")s+=20;
+  }
+  return s;
+}
 function aiChooseSetupType(){
   const myPlaced=alive("E").map(p=>p.type);      // 自分が既に置いた駒
   const foesPlaced=alive("P").map(p=>p.type);    // 相手が既に置いた駒
@@ -2745,7 +3182,8 @@ function aiChooseSetupType(){
   let CANDS=["kenshi","senshi","kiba","souhei","kyuhei","sogeki","kyuketsuki",
                "tatehei","jutsushi","akuryo","esper","fushicho","yusha","wanashi",
                "jusoshi","majo","bakudan","miko","gunshi","kusushi","chokyo",
-               "boken","seishoku","ninja"];
+               "boken","seishoku","ninja",
+               "inoshishi","kaizoku","taka"];  // 戦闘・機動が充実した新規駒も選出候補に
   if(myPlaced.some(t=>t==="yusha"))CANDS=CANDS.filter(t=>t!=="yusha"); // 勇者は1駒まで
   let best=null,bestScore=-1e9;
   for(const type of CANDS){
@@ -2765,32 +3203,11 @@ function aiChooseSetupType(){
     s-=dup*70;
 
     // --- 相手の駒への相性（カウンター）---
-    for(const ft of foesPlaced){
-      // 相手が後手でも殴り勝てる近接（剣士・戦士・吸血鬼）を置いてきたら、
-      // 遠距離・盾・妨害で対抗する駒を高評価
-      if(["kenshi","senshi","kyuketsuki","fushicho"].includes(ft)){
-        if(isRanged)s+=45;                    // 遠距離で触らず削る
-        if(type==="tatehei")s+=35;            // 盾で受ける
-        if(type==="jutsushi"||type==="akuryo")s+=30; // 減速・攻撃封じ
-        if(type==="esper")s+=25;              // 位置をずらす
-      }
-      // 相手が遠距離（弓・狙撃）を置いたら、機動力・盾・妨害で寄せる
-      if(ft==="kyuhei"||ft==="sogeki"){
-        if(type==="kiba"||type==="ninja"||type==="boken")s+=35; // 素早く距離を詰める
-        if(type==="tatehei")s+=25;
-        if(type==="akuryo"||type==="esper")s+=25;
-      }
-      // 相手が超能力者・魔女など盤面操作系なら、粘る駒や妨害で対応
-      if(ft==="esper"||ft==="majo"){
-        if(type==="fushicho")s+=20;
-        if(type==="jutsushi")s+=18;
-      }
-      // 相手が勇者を置いたら（将来の覚醒に備え）粘り・妨害を少し評価
-      if(ft==="yusha"){
-        if(type==="fushicho"||type==="tatehei")s+=18;
-      }
-    }
-
+    for(const ft of foesPlaced) s+=aiSetupCounter(type,ft);
+    // --- 学習：あなたが次に出してきそうな駒（よく使う・よくCPUを倒す駒）にも先回りで備える ---
+    const lc=learnConf();
+    if(lc>0){ for(const pf of learnPredictedFoes()){ if(!foesPlaced.includes(pf.type)) s+=aiSetupCounter(type,pf.type)*pf.w*lc*1.5; } }
+    s+=learnPieceBonus(type); // 学習：この端末で戦績の良い駒を優先
     // --- 自軍の編成シナジー ---
     // 前衛アタッカーが居るなら、支援・妨害役を足すとバランスが良い
     const myAttackers=myPlaced.filter(t=>["kenshi","senshi","kiba","souhei","kyuketsuki"].includes(t)).length;
@@ -2923,6 +3340,8 @@ function reachWithPaths(p){
 
 function startAITurn(){
   if(G.over)return;
+  learnRefreshFX();
+  learnSnap("E");
   G.turn="E";G.phase="action";
   G.attackUsed=false; // このターンでまだ通常攻撃していない
   for(const p of alive("E")){
@@ -3166,7 +3585,17 @@ const PIECE_ROLE={
   jusoshi:"control", miko:"control", esper:"control", seishoku:"control",
   majo:"control", bakudan:"control",
   // 悪霊は牽制寄りだが相対したら出撃級（タイマン最強）
-  akuryo:"sortie"
+  akuryo:"sortie",
+  // 新規駒の役割
+  inoshishi:"assault",  // 猪：直進突進で間合いを詰める
+  kaizoku:"assault",    // 海賊：8方向機動の攻撃役
+  taka:"assault",       // 鷹：8方向＋跳躍の機動役
+  inseki:"control",     // 隕石：遠隔砲撃（流星群）型の後衛
+  uchujin:"control",    // 宇宙人：盤面操作（転移）
+  ryoushu:"sortie",     // 領主：近接＋領地化
+  sagishi:"sortie",     // 詐欺師：近接（偽装）
+  kitsune:"sortie",     // 狐：変化で状況対応する近接
+  kami:"sortie"         // 神：近接＋超越
 };
 /* 役割ごとの「敵へ近づく価値」係数（大きいほど前へ出る） */
 const ROLE_ADVANCE={ sortie:12, assault:16, intercept:4, control:2 };
@@ -3175,7 +3604,9 @@ const SS_PIECE_WORTH={
   yusha:60, kyuketsuki:45, kiba:42, sogeki:40, kyuhei:38, senshi:40, kenshi:38,
   souhei:34, fushicho:36, esper:34, jutsushi:30, majo:30, akuryo:28, seishoku:30,
   gunshi:24, miko:24, chokyo:22, kusushi:26, wanashi:24, bakudan:26, ninja:30,
-  jusoshi:26, boken:28, tatehei:26, kemono:6
+  jusoshi:26, boken:28, tatehei:26, kemono:6,
+  // 新規駒の価値（爆弾退避などの優先度）
+  inoshishi:34, kaizoku:36, taka:36, inseki:40, uchujin:30, ryoushu:30, sagishi:30, kitsune:34, kami:42
 };
 
 /* プレイヤー駒 f が次の手番に「移動→通常攻撃」で与えうる最大脅威を点数化。
@@ -3398,7 +3829,7 @@ function heuristicAbilityFor(p,dr,dc){
    ========================================================= */
 const SS={ // 静的データ（全24種対応）
   // 通常攻撃を持たない駒
-  noNormal:new Set(["kyuhei","sogeki","wanashi","miko","chokyo","majo"]),
+  noNormal:new Set(["kyuhei","sogeki","wanashi","miko","chokyo","majo","inseki"]),
   // 遠距離攻撃を「能力」として撃てる駒（探索で展開）
   ranged:new Set(["kyuhei","sogeki"]),
   // 行動力2の駒（騎馬・忍者・冒険者）
@@ -3407,7 +3838,7 @@ const SS={ // 静的データ（全24種対応）
 const SS_MAXAP={kiba:2,ninja:2,boken:2};
 function ssClone(st){
   return {
-    side:st.side, kP:st.kP, kE:st.kE, trapProb:st.trapProb, ninjaProb:st.ninjaProb, walls:st.walls, bombs:st.bombs, territories:st.territories,
+    side:st.side, kP:st.kP, kE:st.kE, trapProb:st.trapProb, ninjaProb:st.ninjaProb, walls:st.walls, bombs:st.bombs, territories:st.territories, meteors:st.meteors,
     ps:st.ps.map(p=>({id:p.id,t:p.t,o:p.o,r:p.r,c:p.c,hp:p.hp,
       block:p.block?{r:p.block.r,c:p.block.c}:null,phoenix:p.phoenix,maxAp:p.maxAp,heroBoost:p.heroBoost,invis:p.invis}))
   };
@@ -3432,7 +3863,7 @@ function ssFromGame(side){
   if(hiddenFoeNinja && G.ninjaProb){
     for(const e of G.ninjaProb)for(const cl of e.cells)ninjaProb.push({r:cl.r,c:cl.c,prob:cl.prob});
   }
-  return {side, kP:G.kills.P, kE:G.kills.E, ps, trapProb, ninjaProb, walls:(G.walls||[]).map(w=>({r:w.r,c:w.c})), bombs:(G.bombs||[]).map(b=>({r:b.r,c:b.c,owner:b.owner,fuse:b.fuse})), territories:(G.territories||[]).map(t=>({r:t.r,c:t.c,owner:t.owner}))};
+  return {side, kP:G.kills.P, kE:G.kills.E, ps, trapProb, ninjaProb, walls:(G.walls||[]).map(w=>({r:w.r,c:w.c})), bombs:(G.bombs||[]).map(b=>({r:b.r,c:b.c,owner:b.owner,fuse:b.fuse})), territories:(G.territories||[]).map(t=>({r:t.r,c:t.c,owner:t.owner})), meteors:(G.meteors||[]).map(m=>({owner:m.owner,cells:m.cells.map(c=>({r:c.r,c:c.c}))}))};
 }
 const ssAt=(st,r,c)=>st.ps.find(p=>p.r===r&&p.c===c);
 function ssMoveDirs(t){ return (t==="kiba"||t==="ninja"||t==="kaizoku"||t==="taka")?ALL8:ORTHO; }
@@ -3450,11 +3881,15 @@ function ssColorOk(st,p,nr,nc){
   for(const q of allies){ if(q.id!==p.id&&half(q.c)===h) same++; }
   return same<3;
 }
-function ssAtk(p,kind){
+function ssAtk(p,kind,target){
   let d=1;
   if(p.t==="kenshi")d+=0.5;
   if(p.t==="senshi"){if(p.hp<=1)d+=2;else if(p.hp<=2)d+=1;}
   if(p.t==="yusha"&&p.heroBoost&&kind==="melee")d=3;
+  // 猪：基本0.5ダメ。直進フルAP移動直後（charged）の通常攻撃のみ2ダメ。
+  if(p.t==="inoshishi")d = (p.charged && kind==="melee") ? 2 : 0.5;
+  // 海賊：通常攻撃の相手が自分よりHPが高い時（同数不可）、与ダメ+1。
+  if(p.t==="kaizoku" && kind==="melee" && target && target.hp>p.hp)d+=1;
   return d;
 }
 function ssRangedCells(p,r,c){
@@ -3486,7 +3921,7 @@ function ssNormalCells(p){
 /* ダメージ適用（撃破・不死鳥・吸血を処理）。撃破イベントを返す */
 function ssDealDamage(st,attacker,target,kind){
   if(target.block&&attacker&&attacker.r===target.block.r&&attacker.c===target.block.c)return;
-  let d=ssAtk(attacker,kind);
+  let d=ssAtk(attacker,kind,target);
   let killed=target.hp-d<=0;
   if(killed&&target.t==="fushicho"&&!target.phoenix){
     target.phoenix=true;target.hp=0.5;killed=false;
@@ -3525,6 +3960,7 @@ function ssGenerate(st){
       const ns=ssClone(st);
       const np=ns.ps.find(x=>x.id===p.id);
       np.r=d.r;np.c=d.c;
+      if(p.t==="inoshishi")np.charged=!!d.charge; // 猪：直進フルAPで突進可能になる
       pushState(ns);
       // 遠距離（弓兵・狙撃）：移動後に残APがあれば
       if(SS.ranged.has(p.t)&&d.apLeft>=1){
@@ -3607,9 +4043,35 @@ function ssReach(st,p){
       if(!res[k]||res[k].cost>2)res[k]={cost:2};
     }
   }
+  // 鷹跳躍：隣接の障害物（駒・壁）を1つ飛び越えて、すぐ先の空きマスへ着地（1AP）
+  if(p.t==="taka"&&p.maxAp>=1){
+    const obstacle=(r,c)=>occupied(r,c)||wall(r,c);
+    for(const [dr,dc] of ALL8){
+      const or=p.r+dr,oc=p.c+dc,nr=p.r+dr*2,nc=p.c+dc*2;
+      if(!inB(or,oc)||!inB(nr,nc))continue;
+      if(!obstacle(or,oc))continue;           // 隣が障害物の時のみ跳躍
+      if(obstacle(nr,nc))continue;            // 着地先が空きでない＝不可
+      if(terrBlock(nr,nc))continue;
+      if(!ssColorOk(st,p,nr,nc))continue;
+      const k=nr+","+nc;
+      if(!res[k]||res[k].cost>1)res[k]={cost:1};
+    }
+  }
+  // 猪の突進：直進でフルAP移動したマスを「突進可能(charge)」としてタグ付け（到達した場合のみ）
+  const chargeSet=new Set();
+  if(p.t==="inoshishi"){
+    for(const [dr,dc] of ORTHO){
+      let ok=true;
+      for(let s=1;s<=p.maxAp;s++){
+        const rr=p.r+dr*s, cc=p.c+dc*s;
+        if(!inB(rr,cc)||occupied(rr,cc)||wall(rr,cc)||terrBlock(rr,cc)){ok=false;break;}
+      }
+      if(ok){ const lr=p.r+dr*p.maxAp, lc=p.c+dc*p.maxAp; if(res[lr+","+lc])chargeSet.add(lr+","+lc); }
+    }
+  }
   return Object.keys(res).map(k=>{
     const [r,c]=k.split(",").map(Number);
-    return {r,c,cost:res[k].cost,apLeft:p.maxAp-res[k].cost};
+    return {r,c,cost:res[k].cost,apLeft:p.maxAp-res[k].cost, charge:chargeSet.has(k)};
   });
 }
 /* 手番側のベスト通常攻撃を1回だけ適用 */
@@ -3623,7 +4085,7 @@ function ssBestAttack(st,side){
       if(!t)continue;
       if(!ssTargetable(t,side))continue; // 透明忍者は攻撃不可
       if(t.block&&a.r===t.block.r&&a.c===t.block.c)continue;
-      const d=ssAtk(a,"melee");
+      const d=ssAtk(a,"melee",t);
       const kills=t.hp-d<=0&&!(t.t==="fushicho"&&!t.phoenix);
       let s=(kills?1000:0)+d*200+(3-Math.max(0,t.hp-d))*40;
       if(t.t==="kemono")s=s*0.08-30; // 獣は撃破価値が低い（即再召喚）→調教師本体を優先
@@ -3871,13 +4333,21 @@ function ssEval(st){
     }
   }
 
+  // === 学習：この端末のあなたがよくCPUを倒す駒の間合いには不用意に入らない ===
+  if(LEARN_FX.conf>0){
+    for(const f of pP){
+      const df=LEARN_FX.danger[f.t]; if(!df)continue;
+      const rng=(f.maxAp||1)+1;
+      for(const e of eP){ if(Math.abs(e.r-f.r)+Math.abs(e.c-f.c)<=rng) v-=df*10; }
+    }
+  }
   // === 攻め圧＆初手優位：役割(戦法)に応じて前線への出方を変える ===
   for(const p of eP){
     if(pP.length){
       const dmin=dist(p,pP);
       const role=PIECE_ROLE[p.t]||"sortie";
       const adv=ROLE_ADVANCE[role]!==undefined?ROLE_ADVANCE[role]:10;
-      v-=dmin*adv; // 出撃・強襲は前へ出る価値大、牽制・迎撃は小（後衛を保つ）
+      v-=dmin*adv*LEARN_FX.advMul; // 出撃・強襲は前へ出る価値大、牽制・迎撃は小（後衛を保つ）
       // 迎撃・牽制の遠距離/罠役は、近づきすぎ（隣接）を軽くペナルティ（後方で運用）
       if((role==="intercept"||role==="control") && dmin===1 && SS.noNormal.has(p.t))v-=15;
       // 通常攻撃を先に当てられる間合い（隣接）で、返り討ちに遭わない駒は強く加点。
@@ -4085,6 +4555,17 @@ function ssEval(st){
 
 
 
+  // === 相手(P)の流星群：着弾候補マスに立つと撃破、その十字隣接は0.5ダメ。候補マスは強く避ける。 ===
+  if(st.meteors&&st.meteors.length){
+    for(const m of st.meteors){
+      if(m.owner!=="P")continue;
+      for(const e of eP){
+        const worth=SS_PIECE_WORTH[e.t]||20;
+        if(m.cells.some(c=>c.r===e.r&&c.c===e.c)){ v-= 120+worth*2; continue; } // 着弾＝撃破の危険
+        if(e.hp<=0.5 && m.cells.some(c=>Math.abs(c.r-e.r)+Math.abs(c.c-e.c)===1)) v-= 40+worth; // 余波で落ちる
+      }
+    }
+  }
   // === 設置済みの爆弾：爆心＋周囲8マス(3×3)へ1.5ダメージ。爆風圏のE駒は大きく減点して逃がす。 ===
   // 例外：その場に留まって「ゲームに勝てる」または「キル数で差をつけられる」時は減点しない。
   if(st.bombs&&st.bombs.length){
@@ -4335,6 +4816,7 @@ function ssBestPrepare(){
     }
   }
   if(rootMoves.length===0)return null;
+  const lessons=learnLessonsFor(root); // 学習：この盤面（または近い盤面）で過去に敗着となった手
   const applied=rootMoves.map(mv=>{
     const ns=ssClone(root);
     const np=ns.ps.find(x=>x.id===mv.pieceId);
@@ -4368,6 +4850,8 @@ function ssBestPrepare(){
       const revisit=aiPosRevisitCount(mv.pieceId, mv.dr, mv.dc);
       if(revisit>=1)repPenalty += revisit*800; // 元いたマスへ戻る＝往復。強く嫌う
     }
+    // 敗着の記憶：同一盤面なら候補から事実上除外、近い盤面でも強く避ける
+    if(lessons.length) repPenalty += learnLessonPenalty(lessons, mv.pieceId, mv.dr, mv.dc, mv.ability?mv.ability.kind:"-", 50000, 1800);
     return {state:ns, acts, plan, repPenalty};
   });
   // 浅い評価の即時フォールバック（千日手ペナルティ込み）
@@ -4463,7 +4947,7 @@ function ssBestAttackPlan(st,side){
       if(!t)continue;
       if(!ssTargetable(t,side))continue; // 透明忍者は攻撃不可
       if(t.block&&a.r===t.block.r&&a.c===t.block.c)continue;
-      const d=ssAtk(a,"melee");
+      const d=ssAtk(a,"melee",t);
       const kills=t.hp-d<=0&&!(t.t==="fushicho"&&!t.phoenix);
       let s=(kills?1000:0)+d*200+(3-Math.max(0,t.hp-d))*40;
       if(t.t==="kemono")s=s*0.08-30; // 獣は撃破価値が低い（即再召喚）→調教師本体を優先
@@ -4606,6 +5090,15 @@ function aiMakePlan(){
       }
     }
   }
+  // 学習：過去に敗着となった手を減点
+  const lessons=learnLessonsFor(ssFromGame("E"));
+  if(lessons.length){
+    for(const c of cands){
+      const p=byId(c.pieceId); if(!p)continue;
+      const d=(c.path&&c.path.length)?c.path[c.path.length-1]:[p.r,p.c];
+      c.score-=learnLessonPenalty(lessons, c.pieceId, d[0], d[1], c.ability?c.ability.kind:"-", 5000, 400);
+    }
+  }
   // 千日手ペナルティ：直近で同一行動を繰り返している候補を減点（2回まではOK）
   for(const c of cands){
     if(c.score>=300) continue; // 撃破級の高評価手は割り引かない
@@ -4719,6 +5212,7 @@ function aiExecutePlan(plan){
   if(plan && plan.ability && plan.ability.kind==="ranged" && plan.path && plan.path.length>0){
     plan={...plan, ability:null};
   }
+  learnNoteCpuMove(plan);            // 学習：この手番のCPUの手を記録
   aiRecordMove(aiSigFromExec(plan)); // 千日手検出用に手を記録
   if(plan&&plan.path&&plan.path.length){ // 往復検出用に到達マスを記録
     const d=plan.path[plan.path.length-1];
@@ -5120,10 +5614,10 @@ function render(){
     const mkRow=document.createElement("div");mkRow.className="mkRow";
     const addMk=(cls,txt,title)=>{
       const m=document.createElement("div");m.className="marker "+cls;
-      m.textContent=txt;m.title=title||"";mkRow.appendChild(m);
+      m.innerHTML=icon(txt);m.title=title||"";mkRow.appendChild(m);
     };
-    for(const t of G.traps)if(t.r===r&&t.c===c&&t.owner==="P"){ addMk("mk-trap","✕","罠"); }
-    for(const b of G.bombs)if(b.r===r&&b.c===c){ addMk("mk-bomb","💣","爆弾"); }
+    for(const t of G.traps)if(t.r===r&&t.c===c&&t.owner==="P"){ addMk("mk-trap","cross","罠"); }
+    for(const b of G.bombs)if(b.r===r&&b.c===c){ addMk("mk-bomb","bomb","爆弾"); }
     if(wallAt(r,c)){
       cell.classList.add("wallCell");
       const w=G.walls.find(x=>x.r===r&&x.c===c);
@@ -5138,7 +5632,7 @@ function render(){
     // 領地マス（自軍=P/敵軍=E で色分け）
     const terrOwner=territoryOwnerAt(r,c);
     if(terrOwner){ cell.classList.add(terrOwner==="P"?"terrP":"terrE"); }
-    for(const p of G.pieces)if(!p.dead&&p.flags.block&&p.flags.block.r===r&&p.flags.block.c===c){ addMk("mk-block","🛡","盾の防御"); }
+    for(const p of G.pieces)if(!p.dead&&p.flags.block&&p.flags.block.r===r&&p.flags.block.c===c){ addMk("mk-block","shield","盾の防御"); }
     if(mkRow.children.length)cell.appendChild(mkRow);
     const p=at(r,c);
     if(p&&p.flags.pendingMeteor){ /* 着弾待ちの隕石は空へ昇っているので盤上に描画しない */ }
@@ -5180,9 +5674,9 @@ function render(){
         const em=document.createElement("div");
         em.className="espMark "+(p.flags.esperMode==="diag"?"diag":"ortho");
         if(p.flags.esperMode==="diag"){
-          em.innerHTML='<span class="ul">◤</span><span class="ur">◥</span><span class="dl">◣</span><span class="dr">◢</span>';
+          em.innerHTML=`<span class="ul">${icon("corner")}</span><span class="ur">${icon("corner",90)}</span><span class="dl">${icon("corner",-90)}</span><span class="dr">${icon("corner",180)}</span>`;
         }else{
-          em.innerHTML='<span class="u">▲</span><span class="d">▼</span><span class="l">◀</span><span class="r">▶</span>';
+          em.innerHTML=`<span class="u">${icon("tri")}</span><span class="d">${icon("tri",180)}</span><span class="l">${icon("tri",-90)}</span><span class="r">${icon("tri",90)}</span>`;
         }
         d.appendChild(em);
       }
@@ -5220,7 +5714,7 @@ function renderCtrl(){
   const btn=(label,cls,fn,dis)=>{
     const b=document.createElement("button");
     b.className="act"+(cls?" "+cls:"");
-    b.textContent=label;b.disabled=!!dis;b.onclick=fn;
+    b.innerHTML=label;b.disabled=!!dis;b.onclick=fn;
     ctrl.appendChild(b);
   };
   if(G.over){btn("もう一度戦う","primary",()=>showStart());return;}
@@ -5234,7 +5728,7 @@ function renderCtrl(){
       btn(mustAct?"攻撃フェーズへ（要：駒1体の行動）":apLeft?"攻撃フェーズへ（行動力を使い切る）":"攻撃フェーズへ","primary",()=>gotoAttackPhase(),mustAct||apLeft);
       // 何か動かした後なら手番をやり直せる（攻撃フェーズ移行前まで）
       if(G.acted && turnSnapshot){
-        btn("↩ 手番をやり直す","",()=>restoreTurnSnapshot());
+        btn(icon("undo")+" 手番をやり直す","",()=>restoreTurnSnapshot());
       }
     }else if(UI.mode==="ability"){
       btn("キャンセル","",()=>{clearAbility();render();});
@@ -5284,7 +5778,7 @@ function renderInfo(){
       const wrap=document.createElement("div");wrap.className="abilBtns";
       for(const b of btns){
         const bb=document.createElement("button");
-        bb.className="act";bb.textContent=b.label;bb.disabled=!b.enabled;
+        bb.className="act";bb.innerHTML=b.label;bb.disabled=!b.enabled;
         bb.onclick=b.fn;
         wrap.appendChild(bb);
       }
@@ -5304,6 +5798,7 @@ function renderInfo(){
    ========================================================= */
 function openModal(title,bodyHtml,buttons){
   $("#modalTitle").textContent=title;
+  { const m=$("#modal"); if(m&&m.classList)m.classList.remove("wide"); }
   $("#modalBody").innerHTML=bodyHtml;
   const bt=$("#modalBtns");bt.innerHTML="";
   for(const b of buttons||[]){
@@ -5316,65 +5811,82 @@ function openModal(title,bodyHtml,buttons){
 }
 function closeModal(){$("#modalBack").classList.add("hidden");}
 let pickerArgs=null;
+const PK_ROLES=[
+  {k:"all",label:"全て",col:""},
+  {k:"sortie",label:"近接",col:"#d9a441"},
+  {k:"assault",label:"強襲",col:"#e0603e"},
+  {k:"intercept",label:"遠距離",col:"#5aa0e6"},
+  {k:"control",label:"支援・妨害",col:"#9a7ae0"},
+];
+function pkRoleOf(t){ return (typeof PIECE_ROLE!=="undefined"&&PIECE_ROLE[t])||"sortie"; }
+function pkRoleCol(t){ const r=PK_ROLES.find(x=>x.k===pkRoleOf(t)); return r?r.col:"#d9a441"; }
 function openPiecePicker(title,cb,opts){
   opts=opts||{};
-  pickerArgs={title,cb};
-  // 勇者・隕石は1駒制限：自軍に既にいれば選べない
-  const hasYusha=alive("P").some(p=>p.type==="yusha");
-  const hasInseki=alive("P").some(p=>p.type==="inseki");
+  pickerArgs={title,cb,opts};
+  // 勇者は1駒制限：自軍に既にいれば選べない（隕石の個数制限は解除）
+  const hasYusha=(typeof G!=="undefined"&&G&&G.pieces)?alive("P").some(p=>p.type==="yusha"):false;
   const excludeSet=new Set(opts.exclude||[]);
   const list = PICKABLE.filter(t=>!excludeSet.has(t));
-  // 検索ボックス（駒名・説明で絞り込み）＋駒グリッド
-  const renderCards=(q)=>{
-    const query=(q||"").trim().toLowerCase();
-    let html='<div class="pickGrid">';
-    let shown=0;
+  let role="all", query="", selT=null;
+  const isLocked=t=>(t==="yusha"&&hasYusha);
+  const tilesHtml=()=>{
+    const q=query.trim().toLowerCase();
+    let html='<div class="pickGrid2">', shown=0;
     for(const t of list){
       const I=PIECES[t];
-      // 検索：駒名・かな・説明・表示漢字にマッチ
-      if(query){
-        const hay=(I.name+" "+(I.k||"")+" "+(I.desc||"")).toLowerCase();
-        if(!hay.includes(query))continue;
-      }
+      if(role!=="all" && pkRoleOf(t)!==role)continue;
+      if(q){ const hay=(I.name+" "+(I.k||"")+" "+(I.desc||"")).toLowerCase(); if(!hay.includes(q))continue; }
       shown++;
-      const locked=(t==="yusha"&&hasYusha)||(t==="inseki"&&hasInseki);
-      const lockMsg=(t==="inseki")?"すでに隕石が場にいるため選べません":"すでに勇者が場にいるため選べません";
-      html+=`<div class="pCard${locked?" locked":""}" data-t="${t}"${locked?' data-locked="1"':""}>
-        <div class="t"><span class="nm">${I.name}</span><span class="ap">行動力${I.ap}</span></div>
-        <div class="d">${locked?lockMsg:I.desc}</div></div>`;
+      html+=`<div class="pTile${isLocked(t)?" locked":""}${selT===t?" sel":""}" data-t="${t}">
+        <i class="pr" style="background:${pkRoleCol(t)}"></i><span class="pa">${I.ap}</span>
+        <div class="pIcon">${I.k||I.name[0]}</div><div class="pn">${I.name}</div></div>`;
     }
-    if(shown===0)html+='<div style="padding:12px;opacity:.7">該当する駒がありません</div>';
-    html+="</div>";
-    return html;
+    if(shown===0)html+='<div style="grid-column:1/-1;padding:12px;opacity:.7">該当する駒がありません</div>';
+    return html+"</div>";
   };
-  const searchBox='<input id="pieceSearch" type="text" placeholder="駒を検索（名前・能力で絞り込み）" '+
-    'style="width:100%;box-sizing:border-box;padding:9px 12px;margin-bottom:10px;border-radius:8px;'+
-    'border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.08);color:#fff;font-size:15px" autocomplete="off">';
-  const html=searchBox+'<div id="pickCards">'+renderCards("")+'</div>';
+  const detailHtml=()=>{
+    if(!selT)return '<div class="pkDetail empty">駒をタップすると詳細を表示（もう一度タップで決定）</div>';
+    const I=PIECES[selT], lk=isLocked(selT);
+    const roleLabel=(PK_ROLES.find(x=>x.k===pkRoleOf(selT))||{}).label||"";
+    const meta=`行動力${I.ap}・HP${I.maxHp||3}${I.noNormal?"・通常攻撃不可":""}・${roleLabel}`;
+    return `<div class="pkDetail"><div class="pIcon big">${I.k||I.name[0]}</div><div class="dx">
+      <div class="dn">${I.name}<span class="dm">${meta}</span></div>
+      <div class="dd">${lk?"すでに勇者が場にいるため選べません":I.desc}</div>
+      ${lk?"":`<button class="act primary go" id="pkGo">${I.name}に決定</button>`}</div></div>`;
+  };
+  const chipsHtml=()=>PK_ROLES.map(r=>`<span class="pkChip${role===r.k?" on":""}" data-r="${r.k}">${r.col?`<i style="background:${r.col}"></i>`:""}${r.label}</span>`).join("");
+  const html=`<div class="pkTop"><input id="pieceSearch" type="text" placeholder="駒を検索（名前・能力）" autocomplete="off"></div>
+    <div class="pkChips" id="pkChips">${chipsHtml()}</div>
+    <div id="pickCards">${tilesHtml()}</div><div id="pkDet">${detailHtml()}</div>`;
   openModal(title,html,[{label:"盤面を確認する",fn:()=>{closeModal();showPeekBack();}}]);
-  // カードのクリックハンドラを（再）設定する
-  const bindCards=()=>{
-    $("#modalBody").querySelectorAll(".pCard").forEach(card=>{
-      if(card.dataset.locked){ card.onclick=()=>{}; return; } // ロック中は反応しない
-      card.onclick=()=>{sfx("pick");pickerArgs=null;hidePeekBack();closeModal();cb(card.dataset.t);};
-    });
+  { const m=$("#modal"); if(m&&m.classList)m.classList.add("wide"); }
+  const choose=t=>{ if(!t||isLocked(t))return; sfx("pick");pickerArgs=null;hidePeekBack();closeModal();cb(t); };
+  const refresh=()=>{
+    const pc=$("#pickCards"); if(pc)pc.innerHTML=tilesHtml();
+    const dt=$("#pkDet"); if(dt)dt.innerHTML=detailHtml();
+    const ch=$("#pkChips"); if(ch)ch.innerHTML=chipsHtml();
+    bind();
   };
-  bindCards();
-  // 検索入力で絞り込み
+  const bind=()=>{
+    $("#modalBody").querySelectorAll(".pTile").forEach(el=>{
+      el.onclick=()=>{
+        const t=el.dataset.t;
+        if(selT===t && !isLocked(t)){ choose(t); return; } // 2回目のタップで決定
+        selT=t; refresh();
+      };
+    });
+    $("#modalBody").querySelectorAll(".pkChip").forEach(el=>{ el.onclick=()=>{ role=el.dataset.r; refresh(); }; });
+    const go=$("#pkGo"); if(go)go.onclick=()=>choose(selT);
+  };
+  bind();
   const sb=$("#pieceSearch");
-  if(sb){
-    sb.oninput=()=>{
-      const cards=$("#pickCards");
-      if(cards)cards.innerHTML=renderCards(sb.value);
-      bindCards();
-    };
-  }
+  if(sb){ sb.oninput=()=>{ query=sb.value; refresh(); }; }
 }
 function showPeekBack(){
   hidePeekBack();
   const b=document.createElement("button");
-  b.id="peekBack";b.className="act primary";b.textContent="▲ 駒の選択に戻る";
-  b.onclick=()=>{hidePeekBack();if(pickerArgs)openPiecePicker(pickerArgs.title,pickerArgs.cb);};
+  b.id="peekBack";b.className="act primary";b.innerHTML=icon("tri")+" 駒の選択に戻る";
+  b.onclick=()=>{hidePeekBack();if(pickerArgs)openPiecePicker(pickerArgs.title,pickerArgs.cb,pickerArgs.opts);};
   document.body.appendChild(b);
 }
 function hidePeekBack(){
@@ -5405,8 +5917,9 @@ function showStart(){
     <label id="randomDealToggle" style="display:flex;align-items:center;justify-content:center;gap:8px;
       margin:4px 0 10px;padding:8px;background:var(--panel2);border-radius:8px;cursor:pointer;font-size:14px">
       <input type="checkbox" id="rndChk" style="width:18px;height:18px">
-      <span>🎲 ランダム配布モード（両者の駒3つを完全ランダムで配布）</span>
+      <span>${icon("dice")} ランダム配布モード（両者の駒3つを完全ランダムで配布）</span>
     </label>
+    ${learnSummaryHtml()}
     <div class="ruleSec"><h3>ソロプレイ（AI対戦）</h3>
       <div class="choiceList">
         <button class="act" id="lvEasy">やさしい — 時々ゆるい手を指す</button>
@@ -5423,6 +5936,7 @@ function showStart(){
     </div>
     <p style="color:var(--sub);font-size:12px;text-align:center">右上の「？」でいつでもルールと駒一覧を確認できます。</p>
   `,[]);
+  learnBindButtons();
   const rc=$("#rndChk"); if(rc)rc.checked=randomDeal;
   const syncRnd=()=>{randomDeal=$("#rndChk").checked;};
   $("#lvEasy").onclick=()=>{syncRnd();aiLevel="easy";closeModal();newGame();};
@@ -5434,7 +5948,10 @@ function showStart(){
 
 /* ---------- boot ---------- */
 $("#helpBtn").onclick=showHelp;
-$("#muteBtn").onclick=()=>{soundOn=!soundOn;$("#muteBtn").textContent=soundOn?"♪":"✕";};
+const syncMuteIcon=()=>{$("#muteBtn").innerHTML=icon(soundOn?"soundOn":"soundOff");};
+syncMuteIcon();
+$("#muteBtn").onclick=()=>{soundOn=!soundOn;syncMuteIcon();};
+{ const zl=$("#zoneLabel"); if(zl)zl.innerHTML=`<span>${icon("tri",-90)} 左陣</span><span>右陣 ${icon("tri",90)}</span>`; }
 showStart();
 </script>
 </body>
