@@ -975,7 +975,7 @@ function netSerialize(){
       hp:p.hp,ap:p.ap,maxAp:p.maxAp,dead:p.dead,flags:p.flags})),
     traps:G.traps,bombs:G.bombs,walls:(G.walls||[]).map(w=>({r:w.r,c:w.c,life:w.life})),meteors:(G.meteors||[]).map(m=>({id:m.id,owner:m.owner,cells:m.cells,fuse:m.fuse})),territories:(G.territories||[]).map(t=>({r:t.r,c:t.c,owner:t.owner})),kills:G.kills,setupCount:G.setupCount,
     phase:G.phase,turn:G.turn,nphase:G.nphase,
-    respawnQueue:G.respawnQueue,over:G.over
+    respawnQueue:G.respawnQueue,over:G.over,winner:G.winner||null
   };
 }
 function applyState(S){
@@ -1001,7 +1001,7 @@ function applyState(S){
   G.setupCount={P:S.setupCount.E,E:S.setupCount.P};
   G.phase=S.phase;G.turn=opp(S.turn);G.nphase=S.nphase;
   G.respawnQueue=S.respawnQueue.map(o=>opp(o));
-  G.over=S.over;
+  G.over=S.over; G.winner=S.winner?opp(S.winner):null;
   for(const p of G.pieces)pid=Math.max(pid,p.id+1);
   updateScore();
 }
@@ -1044,7 +1044,7 @@ function doMaouNet(next){
 function netDispatch(){
   if(!NET.on)return;
   if(G.over){
-    if(!NET.overShown){NET.overShown=true;endGame(G.kills.P>=2?"P":"E");}
+    if(!NET.overShown){NET.overShown=true;endGame(G.winner||(G.kills.P>=2?"P":"E"));}
     return;
   }
   if(G.nphase==="setup"){beginSetupStep();return;}
@@ -1070,7 +1070,10 @@ function netOnData(msg){
     render();
     NET.applying=false;
   }
-  if(msg.t==="go"){netDispatch();return;}
+  if(msg.t==="go"){
+    // 相手の手番が終わってこちらの手番になった：千日手の記録（相手の負け判定は相手側で行う）
+    if(G.nphase==="battle"&&G.turn==="P"&&!G.over&&msg.S&&msg.S.turn==="P") sennAfterTurn("E",false);
+    netDispatch();return;}
   if(msg.t==="respawn"){
     // 自分の駒が倒された：召喚して制御を返す
     processRespawns(()=>{
@@ -1486,7 +1489,7 @@ function updateScore(){
   $("#scoreE").textContent=G.kills.E;
 }
 function endGame(winner){
-  G.over=true;
+  G.over=true; G.winner=winner;
   if(NET.on){
     NET.overShown=true;
     if(!NET.applying&&!NET.sentOver){NET.sentOver=true;netSend("go");}
@@ -1893,6 +1896,40 @@ function takaCanChainFrom(p,lr,lc){
   return false;
 }
 /* マスに入る処理（罠・透明忍者を解決）戻り値: "ok"|"bounced"|"dead" */
+/* 設置物を置いたマスに、相手の透明の忍者が潜んでいた場合の処理 */
+function hiddenNinjaAt(r,c,placer){
+  const h=at(r,c);
+  return (h&&h.type==="ninja"&&h.flags.invisible&&h.owner!==placer)?h:null;
+}
+// 罠：その場で即発動（1ダメ・次のターン行動力-1）。罠は消費されるので盤面には残らない
+function springTrapOnHiddenNinja(r,c,placer){
+  const h=hiddenNinjaAt(r,c,placer); if(!h)return false;
+  h.flags.invisible=false; clearNinjaProb(h.id);
+  sfx("trap");
+  log(`罠を仕掛けたマスに透明の忍者が潜んでいた！ ${pieceLabel(h)}は罠にかかった（1ダメ・次のターン行動力-1）`,"s");
+  h.flags.apCut=true;
+  dealDamage(h,1,null,"trap");
+  return true;
+}
+// 領地にしたマスの爆弾・罠は壊れる（相手の罠は見えないので、見える側にだけ知らせる）
+function territoryClearObjects(r,c,placer){
+  const nb=G.bombs.filter(b=>b.r===r&&b.c===c).length;
+  if(nb){ G.bombs=G.bombs.filter(b=>!(b.r===r&&b.c===c)); log("領地化で、そのマスの爆弾が壊れた","s"); }
+  const tr=G.traps.filter(t=>t.r===r&&t.c===c);
+  if(tr.length){
+    G.traps=G.traps.filter(t=>!(t.r===r&&t.c===c));
+    if(tr.some(t=>t.owner==="P")) log("領地化で、あなたの罠が壊れた","p",true);
+  }
+  trapProbOnSafe(r,c);   // このマスにはもう罠が無い（CPUの推定からも除く）
+}
+// 領地：相手の領地に入っていることになるので即死
+function territoryCatchHiddenNinja(r,c,placer,src){
+  const h=hiddenNinjaAt(r,c,placer); if(!h)return;
+  h.flags.invisible=false; clearNinjaProb(h.id);
+  log(`領地にした場所に透明の忍者が潜んでいた！ ${pieceLabel(h)}は領地に侵入していたため即死`,"s");
+  sfx("trap");
+  h.hp=0; killPiece(h,src,"territory");
+}
 function enterSquare(p,nr,nc){
   const prevR=p.r,prevC=p.c;
   // 相手の領地には入れない（自分の領地・領地なしは進入可）
@@ -2040,6 +2077,81 @@ function performAttack(attacker,target,kind){
 }
 
 /* =========================================================
+   千日手
+   ・各手番の終了時に盤面を記録し、6〜12手番前（自分の手番3〜6回前）のどれかと全く同じなら千日手。
+     1つの駒の往復（4手番周期）も、2〜3つの駒を順に動かす往復（8〜12手番周期）も検知できる。
+   ・千日手になったら警告。そこから両者とも自分の手番3回以内に「直近12手番に無かった盤面」に
+     変えないと、先に3回目を迎えた側が負け。どちらかが盤面を変えれば警告は解除。
+   ========================================================= */
+const SENN_SPAN=6, SENN_WINDOW=12, SENN_TURNS=3;
+/* 盤面 sig が、次に記録される位置から見て offset 手番前（minOff〜SENN_WINDOW、自分の手番どうし＝偶数）に現れているか */
+function sennSeen(H,sig,minOff){
+  const n=H.length; // sig は H[n] として記録される予定
+  for(let k=minOff;k<=SENN_WINDOW;k+=2){ if(n-k>=0&&H[n-k]===sig)return true; }
+  return false;
+}
+function sennSigFrom(pieces,bombs,traps,terrs,walls,kills){
+  const P=pieces.map(p=>`${p.id}:${p.type}:${p.owner}:${p.r},${p.c}:${p.hp}`).sort().join("|");
+  const B=bombs.map(b=>`${b.owner}${b.r}${b.c}${b.fuse}`).sort().join(",");
+  const T=traps.map(t=>`${t.owner}${t.r}${t.c}`).sort().join(",");
+  const R=terrs.map(t=>`${t.owner}${t.r}${t.c}`).sort().join(",");
+  const W=walls.map(w=>`${w.r}${w.c}`).sort().join(",");
+  return `${P}#${B}#${T}#${R}#${W}#${kills.P}-${kills.E}`;
+}
+function sennSig(){
+  return sennSigFrom(G.pieces.filter(p=>!p.dead).map(p=>({id:p.id,type:p.type,owner:p.owner,r:p.r,c:p.c,hp:p.hp})),
+    G.bombs||[],G.traps||[],G.territories||[],G.walls||[],G.kills);
+}
+/* 探索用の状態（CPUの手番終了後）から同じ形式の盤面署名を作る。
+   相手の罠・透明の駒の実位置はCPUの読みには無いので、現在の実盤面の値を使う（手番中は動かないため） */
+function ssSennSig(ns){
+  const real=new Map(G.pieces.filter(p=>!p.dead).map(p=>[p.id,p]));
+  const ps=[];
+  for(const q of ns.ps){
+    if(q.dead||q.guess)continue;
+    ps.push({id:q.id,type:q.t,owner:q.o,r:q.r,c:q.c,hp:q.hp});
+  }
+  for(const p of real.values()) if(p.owner==="P"&&p.flags.invisible&&!ps.some(x=>x.id===p.id)&&ns.ps.some(q=>q.guess&&q.id===p.id&&!q.dead))
+    ps.push({id:p.id,type:p.type,owner:p.owner,r:p.r,c:p.c,hp:(ns.ps.find(q=>q.id===p.id)||p).hp});
+  const traps=[...(G.traps||[]).filter(t=>t.owner==="P"),...(ns.eTraps||[]).map(t=>({owner:"E",r:t.r,c:t.c}))];
+  return sennSigFrom(ps,ns.bombs||[],traps,ns.territories||[],G.walls||[],{P:ns.kP,E:ns.kE});
+}
+/* side の手番終了時に呼ぶ。side が千日手で負けたら true（judge=false なら判定だけしない） */
+function sennAfterTurn(side,judge=true){
+  if(!G.sennHist)G.sennHist=[];
+  const sig=sennSig();
+  const H=G.sennHist;
+  // 検知：6〜12手番前のどれかと同じ。警告中の継続判定：直近12手番（2手番前〜）に同じ盤面があれば「変えていない」
+  const same = G.senn ? sennSeen(H,sig,2) : sennSeen(H,sig,SENN_SPAN);
+  H.push(sig);
+  if(H.length>40)H.shift();
+  const who=s=>s==="P"?"あなた":"敵";
+  if(!G.senn){
+    if(same){
+      G.senn={left:{P:SENN_TURNS,E:SENN_TURNS}};
+      log(`⚠ 千日手です（少し前と盤面が全く同じ）。これから自分の手番3回以内に手を変えないと負けになります`,"s");
+      sfx("curse");
+    }
+    return false;
+  }
+  if(!same){
+    G.senn=null;
+    log(`千日手が解消されました（${who(side)}が手を変えた）`,"s");
+    return false;
+  }
+  G.senn.left[side]--;
+  if(G.senn.left[side]<=0){
+    if(!judge)return false;
+    log(`千日手のまま手を変えなかったため、${who(side)}の負けです`,"s");
+    return true;
+  }
+  if(side==="E") log(`⚠ 千日手が続いています：あなたは残り${G.senn.left.P}手番以内に手を変えないと負け（敵は残り${G.senn.left.E}手番）`,"s");
+  return false;
+}
+/* 次の自分の手番が千日手の最終手番（盤面を変えないと負け）か */
+function sennLastChance(side){ return !!(G.senn&&G.senn.left[side]<=1); }
+
+/* =========================================================
    ターン進行（プレイヤー）
    ========================================================= */
 function startPlayerTurn(){
@@ -2061,7 +2173,8 @@ function startPlayerTurn(){
   UI={mode:"action",sel:null,targets:new Set(),ability:null,extra:{}};
   // 手番開始時点のスナップショットを保存（攻撃フェーズ移行前ならやり直し可能）
   saveTurnSnapshot();
-  setPhaseBar('<span class="turnP">あなたの手番 — 行動フェーズ（駒1体を選んで移動／能力）</span>');
+  setPhaseBar('<span class="turnP">あなたの手番 — 行動フェーズ（駒1体を選んで移動／能力）</span>'
+    +(G.senn?`<span class="turnE">　⚠ 千日手：残り${G.senn.left.P}手番以内に盤面を変えないと負け${G.senn.left.P<=1?"（この手番が最後）":""}</span>`:""));
   render();
 }
 let turnSnapshot=null;
@@ -2162,6 +2275,7 @@ function finishPlayerTurnCore(){
     // 相手（E）所有の透明解除：Pの手番終了で解除されるのはE忍者
     for(const p of alive("E"))p.flags.invisible=false;
     for(const p of alive("P")){p.flags.noAttack=false;p.flags.slowedVisual=false;p.flags.mikoBuff=false;}
+    if(sennAfterTurn("P")){ render(); endGame("E"); return; }   // 千日手の判定
     // 神の超越：連続ターンが残っていれば、相手に渡さずもう一度自分のターンを行う（CPU戦のみ）。
     if(!NET.on && (G.pExtraTurns||0)>0){
       G.pExtraTurns--;
@@ -2198,6 +2312,10 @@ function explodeBombs(owner,cont){
   for(const b of ready){
     sfx("bomb");
     log(`爆弾が炸裂！`, "s");
+    // 爆弾マスと周囲8マスの罠は壊れる（どちらの罠も。ログには出さない）
+    const inBlast=(r,c)=>Math.max(Math.abs(r-b.r),Math.abs(c-b.c))<=1;
+    G.traps=G.traps.filter(t=>!inBlast(t.r,t.c));
+    for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++) if(inB(b.r+dr,b.c+dc)) trapProbOnSafe(b.r+dr,b.c+dc);
     // 爆弾マス自身に乗っている駒へのダメージ
     const onBomb=at(b.r,b.c);
     if(onBomb)dealDamage(onBomb,1.5,null,"bomb");
@@ -2296,7 +2414,7 @@ function abilityButtons(p){
     case "wanashi":{
       const myTraps=G.traps.filter(t=>t.setter===p.id).length;
       const cells=ALL8.map(([dr,dc])=>[p.r+dr,p.c+dc])
-        .filter(([r,c])=>inB(r,c)&&!at(r,c)&&!G.traps.some(t=>t.r===r&&t.c===c));
+        .filter(([r,c])=>inB(r,c)&&!visAt(r,c,p.owner)&&territoryOwnerAt(r,c)===null&&!G.traps.some(t=>t.r===r&&t.c===c&&t.owner===p.owner)); // 相手の透明忍者・相手の罠（見えない）のマスにも置ける。爆弾とは共存可。領地には置けない
       const label=myTraps<2?`罠設置（行1）残${2-myTraps}`:"罠設置（行1・最古の罠を撤去して設置）";
       A(label,canAct&&p.ap>=1&&cells.length>0,()=>{
         UI.mode="ability";UI.ability={type:"trap",piece:p};
@@ -2350,7 +2468,7 @@ function abilityButtons(p){
     case "ryoushu":{
       // 領地化：周囲8マスの1つ（駒がおらず・壁でなく・相手の領地でもない空きマス）を領地にする
       const cells=ALL8.map(([dr,dc])=>[p.r+dr,p.c+dc])
-        .filter(([r,c])=>inB(r,c)&&!wallAt(r,c)&&!at(r,c)&&territoryOwnerAt(r,c)!=="E");
+        .filter(([r,c])=>inB(r,c)&&!wallAt(r,c)&&!visAt(r,c,p.owner)&&territoryOwnerAt(r,c)!==opp(p.owner));
       A("領地化（行1）",canAct&&p.ap>=1&&cells.length>0,()=>{
         UI.mode="ability";UI.ability={type:"territory",piece:p};
         UI.targets=new Set(cells.map(t=>t.join(",")));
@@ -2465,7 +2583,7 @@ function abilityButtons(p){
       });break;}
     case "bakudan":{
       const cells=ORTHO.map(([dr,dc])=>[p.r+dr,p.c+dc])
-        .filter(([r,c])=>inB(r,c)&&!at(r,c)&&!G.bombs.some(b=>b.r===r&&b.c===c));
+        .filter(([r,c])=>inB(r,c)&&!visAt(r,c,p.owner)&&territoryOwnerAt(r,c)===null&&!G.bombs.some(b=>b.r===r&&b.c===c)); // 罠とは共存可。領地には置けない
       A("爆弾設置（行1）",canAct&&p.ap>=1&&cells.length>0,()=>{
         UI.mode="ability";UI.ability={type:"bomb",piece:p};
         UI.targets=new Set(cells.map(t=>t.join(",")));render();
@@ -2534,6 +2652,7 @@ function resolveAbilityClick(r,c){
         if(idx>=0)G.traps.splice(idx,1);
         mine=G.traps.filter(t=>t.setter===sid);
       }
+      if(springTrapOnHiddenNinja(r,c,"P"))break;   // 透明の忍者がいたマス：罠は即発動
       G.traps.push({owner:"P",r,c,setter:sid});
       // AIには罠の正確な位置は見えない。罠師の位置から周囲8マスの設置確率を推定して保存する
       recordTrapProbability(sid, p.r, p.c);
@@ -2579,6 +2698,8 @@ function resolveAbilityClick(r,c){
       G.territories=G.territories.filter(t=>t.owner!=="P");
       G.territories.push({r,c,owner:"P"});
       log("領主が領地を宣言した（自分の駒しか入れない）","p",true);sfx("place");
+      territoryClearObjects(r,c,"P");
+      territoryCatchHiddenNinja(r,c,"P",p);   // 透明の忍者がいたマス：即死
       clearAbility();
       processRespawns(()=>render());
       return;}
@@ -3502,7 +3623,8 @@ function startAITurn(){
   UI={mode:"ai",sel:null,targets:new Set(),ability:null,extra:{}};
   render();
   setTimeout(()=>{
-    if(aiLevel==="normal"||aiLevel==="strong"){
+    // やさしいモードでも、千日手の最終手番だけは盤面を変える手を確実に選べるよう探索で決める
+    if(aiLevel==="normal"||aiLevel==="strong"||sennLastChance("E")){
       const doneCb=(res)=>{
         if(res && res.resign && (!res.plan || planIsIdle(res.plan))){
           offerResignation();
@@ -3824,7 +3946,9 @@ function heuristicAbilityFor(p,dr,dc){
       // 相手が魔女を持つなら、魔女自身の行動力を奪う＝そもそも入れ替えさせないのが最有力。
       const witch=foes.find(f=>f.type==="majo");
       if(witch)return {kind:"slow",targetId:witch.id};
-      const t=foes.slice().sort((a,b)=>b.maxAp-a.maxAp)[0];
+      // 調教師は自分では戦わない。獣がいるなら調教師ではなく獣を止める
+      const pool=foes.filter(f=>!(f.type==="chokyo"&&foes.some(b=>b.type==="kemono"&&b.flags.beastOf===f.id)));
+      const t=(pool.length?pool:foes).slice().sort((a,b)=>(b.maxAp-a.maxAp)||((b.type==="kemono")-(a.type==="kemono")))[0];
       return {kind:"slow",targetId:t.id};
     }
     case "akuryo":{ // 攻撃封じ（行0）：通常攻撃の脅威が突出して高い駒のみを封じる
@@ -4339,6 +4463,9 @@ function ssApplyStayAbility(ns,np,ab){
   }
   else if(ab.kind==="territory"){
     ns.territories=[...(ns.territories||[]).filter(t=>t.owner!==np.o),{r:ab.tr,c:ab.tc,owner:np.o}];
+    // 領地にしたマスの爆弾・罠は壊れる
+    ns.bombs=(ns.bombs||[]).filter(b=>!(b.r===ab.tr&&b.c===ab.tc));
+    ns.eTraps=(ns.eTraps||[]).filter(t=>!(t.r===ab.tr&&t.c===ab.tc));
   }
   else if(ab.kind==="futokoro"){
     np.futoUsed=true; np.r=ab.tr;np.c=ab.tc; ssAfterMove(ns,np,{prisk:ab.prisk||0});
@@ -4362,6 +4489,7 @@ function ssTrapCells(st,p){
     if(ssAt(st,r,c))continue;
     if(st.walls&&st.walls.some(w=>w.r===r&&w.c===c))continue;
     if((st.eTraps||[]).some(t=>t.r===r&&t.c===c))continue;
+    if((st.territories||[]).some(t=>t.r===r&&t.c===c))continue;   // 領地には置けない
     out.push([r,c]);
   }
   return out;
@@ -4588,7 +4716,7 @@ function ssKaguraOptions(st,miko){
         const moved={...a,r:d.r,c:d.c};
         const tmp={...st,ps:st.ps.map(q=>q.id===a.id?moved:q)};
         const skills=a.t==="bakudan"
-          ? ORTHO.map(([dr,dc])=>[d.r+dr,d.c+dc]).filter(([r,c])=>r>=0&&r<6&&c>=0&&c<6&&!ssAt(tmp,r,c)&&!(tmp.bombs||[]).some(b=>b.r===r&&b.c===c)).map(([r,c])=>({kind:"bomb",tr:r,tc:c}))
+          ? ORTHO.map(([dr,dc])=>[d.r+dr,d.c+dc]).filter(([r,c])=>r>=0&&r<6&&c>=0&&c<6&&!ssAt(tmp,r,c)&&!(tmp.bombs||[]).some(b=>b.r===r&&b.c===c)&&!(tmp.territories||[]).some(t=>t.r===r&&t.c===c)).map(([r,c])=>({kind:"bomb",tr:r,tc:c}))
           : a.t==="wanashi" ? ssTrapCells(tmp,moved).map(([r,c])=>({kind:"trap",tr:r,tc:c}))
           : ssStayAbilities(tmp,moved,true).filter(x=>!x.requireKill&&x.kind!=="futokoro"&&x.kind!=="gunshi");
         for(const sk of skills.slice(0,miko.o==="E"?12:6)) out.push({allyId:a.id,dr:d.r,dc:d.c,cost:d.cost,charge:false,shots:[],skill:sk,prisk:0,trapped:!!d.trapped});
@@ -4732,7 +4860,7 @@ function ssGenerate(st){
       if(p.t==="bakudan"&&d.cost===0&&(p.maxAp||1)>=1){
         for(const [dr,dc] of ORTHO){
           const br=p.r+dr,bc=p.c+dc;
-          if(br<0||br>5||bc<0||bc>5||ssAt(st,br,bc)||(st.bombs||[]).some(x=>x.r===br&&x.c===bc))continue;
+          if(br<0||br>5||bc<0||bc>5||ssAt(st,br,bc)||(st.bombs||[]).some(x=>x.r===br&&x.c===bc)||(st.territories||[]).some(t=>t.r===br&&t.c===bc))continue;
           const nb=ssClone(st);
           nb.bombs=[...(nb.bombs||[]),{owner:side,r:br,c:bc,fuse:1}];
           pushState(nb);
@@ -5001,6 +5129,10 @@ function ssBombTick(st,side){
   }
   st.bombs=keep;
   for(const b of boom){
+    // 爆風の範囲の罠は壊れる
+    const inBlast=x=>Math.max(Math.abs(x.r-b.r),Math.abs(x.c-b.c))<=1;
+    if(st.eTraps&&st.eTraps.some(inBlast)) st.eTraps=st.eTraps.filter(x=>!inBlast(x));
+    if(st.trapProb&&st.trapProb.some(inBlast)) { st.trapProb=st.trapProb.filter(x=>!inBlast(x)); st._tpMap=null; }
     for(const t of st.ps){
       if(t.dead||Math.max(Math.abs(t.r-b.r),Math.abs(t.c-b.c))>1)continue;
       ssHurt(st,t,1.5);
@@ -5012,6 +5144,19 @@ function ssHits(a,f){
   if(SS.noNormal.has(a.t)||a.noAtk||a.invis)return false;
   if(f.block&&f.block.r===a.r&&f.block.c===a.c)return false;
   return ssNormalCells(a).some(([r,c])=>r===f.r&&c===f.c);
+}
+/* 止めて動けない駒 tg を、Eが次の手番で確実に討ち取れるか（Eの駒が届く位置から一撃で倒せる） */
+function ssTamerCatchable(st,tg){
+  for(const q of st.ps){
+    if(q.o!=="E"||q.dead||q.t==="kemono")continue;
+    const spots=[{r:q.r,c:q.c},...ssReach(st,{...q,cut:false,noAtk:false})];
+    for(const d of spots){
+      const from={...q,r:d.r,c:d.c,cut:false,noAtk:false};
+      if(!SS.noNormal.has(q.t)&&ssHits(from,tg)&&ssKillable(tg,ssAtk(from,"melee",tg)))return true;
+      if(SS.ranged.has(q.t)&&ssRangedCells(from,d.r,d.c).some(([r,c])=>r===tg.r&&c===tg.c)&&ssKillable(tg,ssAtk(from,"ranged",tg)))return true;
+    }
+  }
+  return false;
 }
 /* その一撃で討ち取れるか（不死鳥の復活が残っていれば討ち取りにならない） */
 function ssKillable(f,dmg){ return f.hp-dmg<=0 && !(f.t==="fushicho"&&!f.phoenix); }
@@ -5758,7 +5903,7 @@ function ssBestPrepare(){
       if(p.t==="bakudan"&&d.cost===0&&d.apLeft>=1){
         for(const [dr2,dc2] of ORTHO){
           const br=p.r+dr2,bc=p.c+dc2;
-          if(br<0||br>5||bc<0||bc>5||ssAt(root,br,bc)||(root.bombs||[]).some(x=>x.r===br&&x.c===bc))continue;
+          if(br<0||br>5||bc<0||bc>5||ssAt(root,br,bc)||(root.bombs||[]).some(x=>x.r===br&&x.c===bc)||(root.territories||[]).some(t=>t.r===br&&t.c===bc))continue;
           rootMoves.push({pieceId:p.id,dr:d.r,dc:d.c,cost:0,apLeft:d.apLeft,ability:{kind:"bomb",tr:br,tc:bc}});
         }
       }
@@ -5766,6 +5911,8 @@ function ssBestPrepare(){
   }
   if(rootMoves.length===0)return null;
   const lessons=learnLessonsFor(root); // 学習：この盤面（または近い盤面）で過去に敗着となった手
+  // 千日手：この手番が最終手番なら、手番終了後の盤面が6手番前と同じになる手は負け
+  const sennChk = (sennLastChance("E")&&G.sennHist&&G.sennHist.length>=2) ? G.sennHist : null;
   const applied=rootMoves.map(mv=>{
     const ns=ssClone(root);
     const np=ns.ps.find(x=>x.id===mv.pieceId);
@@ -5818,24 +5965,33 @@ function ssBestPrepare(){
     const plan={pieceId:mv.pieceId,destR:mv.dr,destC:mv.dc,cost:mv.cost,jump,ability:mv.ability,attack:atk};
     // 千日手ペナルティ：同一行動が直近で3回以上出ていたら、その超過回数ぶん減点
     const rep=aiRepeatCount(aiMoveSig(plan));
-    let repPenalty = rep>=2 ? (rep-1)*600 : 0; // 2回まではOK、3回目以降で強く嫌う
-    // 往復検出：最近いたマスへ戻る手を強く抑制（無意味な往復を断つ）
+    // 同じ手の繰り返し・往復は少しだけ嫌う（千日手のルールがあるので、粘る価値があれば繰り返してもよい）
+    let repPenalty = rep>=2 ? (rep-1)*120 : 0;
     if(moved){
       const revisit=aiPosRevisitCount(mv.pieceId, mv.dr, mv.dc);
-      if(revisit>=1)repPenalty += revisit*800; // 元いたマスへ戻る＝往復。強く嫌う
+      if(revisit>=1)repPenalty += revisit*150;
+    }
+    // 千日手の最終手番：直近12手番に現れた盤面に戻る手は負けなので選ばない（ギリギリまで粘ってここで手を変える）
+    let sennLose=false;
+    if(sennChk){ sennLose = sennSeen(sennChk, ssSennSig(ns), 2); }
+    // 術士で調教師を止める手：調教師は自分では戦わないので、獣がいるなら獣を止める方が良い。
+    // ただし「止めた調教師に次の手番で確実に追いつき討ち取れる」ときだけは調教師を止めてよい
+    if(mv.ability&&mv.ability.kind==="slow"){
+      const tg=ns.ps.find(x=>x.id===mv.ability.targetId);
+      if(tg&&tg.t==="chokyo"&&ns.ps.some(b=>b.t==="kemono"&&b.o===tg.o&&b.beastOf===tg.id)&&!ssTamerCatchable(ns,tg)) repPenalty+=260;
     }
     // 今すぐ討ち取れる手は、同じ評価の「後で討ち取る」手より優先（先送りすると逃げられる恐れ）
     repPenalty -= (ns.kE-root.kE)*80;
     // 敗着の記憶：同一盤面なら候補から事実上除外、近い盤面でも強く避ける
     if(lessons.length) repPenalty += learnLessonPenalty(lessons, mv.pieceId, mv.dr, mv.dc, mv.ability?mv.ability.kind:"-", 50000, 1800,
       learnAbKey(learnAbDetail(mv.ability,id=>{const q=root.ps.find(x=>x.id===id);return q?[q.r,q.c]:null;}),false));
-    return {state:ns, acts, plan, repPenalty};
+    return {state:ns, acts, plan, repPenalty, sennLose};
   });
   for(let i=applied.length-1;i>=0;i--) if(!applied[i]) applied.splice(i,1);
   if(!applied.length)return null;
   // 浅い評価の即時フォールバック（千日手ペナルティ込み）
   let fbBest=-Infinity, fbPlan=null;
-  for(const a of applied){ if(!a.acts)continue; const v=ssEval(a.state)-a.repPenalty+Math.random()*2; if(v>fbBest){fbBest=v;fbPlan=a.plan;} }
+  for(const a of applied){ if(!a.acts||a.sennLose)continue; const v=ssEval(a.state)-a.repPenalty+Math.random()*2; if(v>fbBest){fbBest=v;fbPlan=a.plan;} }
   if(!fbPlan){ for(const a of applied){const v=ssEval(a.state)-a.repPenalty;if(v>fbBest){fbBest=v;fbPlan=a.plan;}} }
   return {applied, fbPlan, fbBest};
 }
@@ -5851,7 +6007,7 @@ function ssRunDepth(applied, depth, order, valById){
     if(ssAbort)break;
     completedAny=true;
     // 千日手ペナルティを反映した実効スコアで手を選ぶ（ただし勝ち確定は割り引かない）
-    const v = raw>=1e6 ? raw : raw-(node.repPenalty||0);
+    const v = node.sennLose ? -2e7 : (raw>=1e6 ? raw : raw-(node.repPenalty||0));
     scored.push({idx,v});
     valById[idx]=v;
     // 同点なら先に読んだ手（前の深さで良かった順）を優先。ただし「何もしない手」は行動する手に置き換える
@@ -6310,17 +6466,19 @@ function aiUseSkillNow(q,sk,plan){
     warpColumn(sk.col,sk.dir); log(`敵の宇宙人が${sk.col+1}列目を${sk.dir<0?"上":"下"}へ転移させた（HP-0.5）`,"e"); sfx("teleport");
     if(q.hp<=0)killPiece(q,null,"self");
   }else if(k==="territory"){
-    if(!inB(sk.tr,sk.tc)||at(sk.tr,sk.tc)||wallAt(sk.tr,sk.tc)||territoryOwnerAt(sk.tr,sk.tc)==="P")return;
+    if(!inB(sk.tr,sk.tc)||visAt(sk.tr,sk.tc,"E")||wallAt(sk.tr,sk.tc)||territoryOwnerAt(sk.tr,sk.tc)==="P")return;
     if(Math.max(Math.abs(sk.tr-q.r),Math.abs(sk.tc-q.c))!==1)return;
     q.ap--; G.territories=(G.territories||[]).filter(t=>t.owner!=="E"); G.territories.push({r:sk.tr,c:sk.tc,owner:"E"});
     log("敵の領主が領地を宣言した（敵の駒しか入れない）","e"); sfx("place");
+    territoryClearObjects(sk.tr,sk.tc,"E");
+    territoryCatchHiddenNinja(sk.tr,sk.tc,"E",q);
   }else if(k==="bomb"){
-    if(!inB(sk.tr,sk.tc)||at(sk.tr,sk.tc)||G.bombs.some(b=>b.r===sk.tr&&b.c===sk.tc)||Math.abs(sk.tr-q.r)+Math.abs(sk.tc-q.c)!==1)return;
+    if(!inB(sk.tr,sk.tc)||visAt(sk.tr,sk.tc,"E")||territoryOwnerAt(sk.tr,sk.tc)!==null||G.bombs.some(b=>b.r===sk.tr&&b.c===sk.tc)||Math.abs(sk.tr-q.r)+Math.abs(sk.tc-q.c)!==1)return;
     q.ap--; G.bombs.push({owner:"E",r:sk.tr,c:sk.tc,fuse:1});
     log("敵の爆弾魔が爆弾を設置した（次の敵手番終了時に爆発）","e"); sfx("pick");
   }else if(k==="trap"){
-    if(!inB(sk.tr,sk.tc)||at(sk.tr,sk.tc)||G.traps.some(t=>t.r===sk.tr&&t.c===sk.tc)||Math.max(Math.abs(sk.tr-q.r),Math.abs(sk.tc-q.c))!==1)return;
-    q.ap--; const sid=trapSetterId(q);
+    if(!inB(sk.tr,sk.tc)||visAt(sk.tr,sk.tc,"E")||territoryOwnerAt(sk.tr,sk.tc)!==null||G.traps.some(t=>t.r===sk.tr&&t.c===sk.tc&&t.owner==="E")||Math.max(Math.abs(sk.tr-q.r),Math.abs(sk.tc-q.c))!==1)return;
+    q.ap--; if(springTrapOnHiddenNinja(sk.tr,sk.tc,"E"))return; const sid=trapSetterId(q);
     let mine=G.traps.filter(t=>t.setter===sid);
     while(mine.length>=2){const idx=G.traps.indexOf(mine[0]);if(idx>=0)G.traps.splice(idx,1);mine=G.traps.filter(t=>t.setter===sid);}
     G.traps.push({owner:"E",r:sk.tr,c:sk.tc,setter:sid});
@@ -6469,7 +6627,7 @@ function aiExecutePlan(plan){
           steps.push(()=>{
             if(p.dead||p.ap<1)return;
             const {tr,tc}=plan.ability;
-            if(!inB(tr,tc)||at(tr,tc)||G.bombs.some(b=>b.r===tr&&b.c===tc))return;
+            if(!inB(tr,tc)||visAt(tr,tc,"E")||territoryOwnerAt(tr,tc)!==null||G.bombs.some(b=>b.r===tr&&b.c===tc))return;
             if(Math.abs(tr-p.r)+Math.abs(tc-p.c)!==1)return;   // 縦横の隣接マスのみ
             p.ap--;
             G.bombs.push({owner:"E",r:tr,c:tc,fuse:1});
@@ -6479,9 +6637,10 @@ function aiExecutePlan(plan){
           steps.push(()=>{
             if(p.dead||p.ap<1)return;
             const {tr,tc}=plan.ability;
-            if(!inB(tr,tc)||at(tr,tc)||G.traps.some(t=>t.r===tr&&t.c===tc))return;
+            if(!inB(tr,tc)||visAt(tr,tc,"E")||territoryOwnerAt(tr,tc)!==null||G.traps.some(t=>t.r===tr&&t.c===tc&&t.owner==="E"))return;
             if(Math.max(Math.abs(tr-p.r),Math.abs(tc-p.c))!==1)return; // 周囲8マスのみ
             p.ap--;
+            if(springTrapOnHiddenNinja(tr,tc,"E"))return;   // 透明の忍者がいたマス：罠は即発動
             const sid=trapSetterId(p);
             let mine=G.traps.filter(t=>t.setter===sid);
             while(mine.length>=2){const idx=G.traps.indexOf(mine[0]);if(idx>=0)G.traps.splice(idx,1);mine=G.traps.filter(t=>t.setter===sid);}
@@ -6624,13 +6783,15 @@ function aiExecutePlan(plan){
           steps.push(()=>{
             if(p.dead||p.ap<1)return;
             const {tr,tc}=plan.ability;
-            if(!inB(tr,tc)||at(tr,tc)||wallAt(tr,tc)||territoryOwnerAt(tr,tc)==="P")return;
+            if(!inB(tr,tc)||visAt(tr,tc,"E")||wallAt(tr,tc)||territoryOwnerAt(tr,tc)==="P")return;
             if(Math.max(Math.abs(tr-p.r),Math.abs(tc-p.c))!==1)return;
             p.ap--;
             if(!G.territories)G.territories=[];
             G.territories=G.territories.filter(t=>t.owner!=="E");
             G.territories.push({r:tr,c:tc,owner:"E"});
             log("敵の領主が領地を宣言した（敵の駒しか入れない）","e");sfx("place");
+            territoryClearObjects(tr,tc,"E");
+            territoryCatchHiddenNinja(tr,tc,"E",p);
           });
         }else if(plan.ability.kind==="futokoro"){
           steps.push(()=>{
@@ -6863,6 +7024,7 @@ function finishAITurnCore(){
       decayWalls(); // 壁は5回のターンエンドで消滅
       for(const p of alive("P")){ if(p.flags.invisible)clearNinjaProb(p.id); p.flags.invisible=false; }
       for(const p of alive("E")){p.flags.noAttack=false;p.flags.slowedVisual=false;p.flags.mikoBuff=false;}
+      if(sennAfterTurn("E")){ render(); endGame("P"); return; }   // 千日手の判定
       // 敵の神の超越：連続ターンが残っていれば、もう一度敵の手番
       if(!NET.on && (G.eExtraTurns||0)>0){
         G.eExtraTurns--;
