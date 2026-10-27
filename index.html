@@ -1911,6 +1911,14 @@ function springTrapOnHiddenNinja(r,c,placer){
   dealDamage(h,1,null,"trap");
   return true;
 }
+// 獣を召喚したマスに相手の透明の忍者がいた：踏み込んだのと同じく、忍者が露見して獣は倒れる
+function beastHitsHiddenNinja(b){
+  const h=hiddenNinjaAt(b.r,b.c,b.owner); if(!h)return false;
+  h.flags.invisible=false; clearNinjaProb(h.id);
+  log("獣を召喚したマスには透明の忍者が潜んでいた！","s"); sfx("trap");
+  dealDamage(b,3,null,"ninja");
+  return true;
+}
 // 領地にしたマスの爆弾・罠は壊れる（相手の罠は見えないので、見える側にだけ知らせる）
 function territoryClearObjects(r,c,placer){
   const nb=G.bombs.filter(b=>b.r===r&&b.c===c).length;
@@ -2519,7 +2527,7 @@ function abilityButtons(p){
       });break;}
     case "chokyo":{
       const hasBeast=alive("P").some(b=>b.type==="kemono"&&b.flags.beastOf===p.id);
-      const cells=ORTHO.map(([dr,dc])=>[p.r+dr,p.c+dc]).filter(([r,c])=>inB(r,c)&&!at(r,c));
+      const cells=ORTHO.map(([dr,dc])=>[p.r+dr,p.c+dc]).filter(([r,c])=>inB(r,c)&&!visAt(r,c,p.owner)&&!wallAt(r,c)); // 相手の透明忍者のマスも候補に出す（位置がばれないように）
       A("獣を召喚（行1）",canAct&&p.ap>=1&&!hasBeast&&cells.length>0,()=>{
         UI.mode="ability";UI.ability={type:"beast",piece:p};
         UI.targets=new Set(cells.map(t=>t.join(",")));render();
@@ -2738,6 +2746,7 @@ function resolveAbilityClick(r,c){
       const b=makePiece("kemono","P",r,c);
       b.flags.beastOf=p.id;
       G.pieces.push(b);
+      if(beastHitsHiddenNinja(b))break;   // 透明の忍者のマスに召喚した：獣は倒れる
       G.slotsLeft++;            // 召喚したターンから獣を行動させられる
       G.currentActor=null;      // 行動駒のロックを解除して獣を選べるように
       UI.sel=b.id;              // 召喚した獣を選択状態に
@@ -4279,7 +4288,7 @@ function ssKill(st,t){
     if(tm)ssHurt(st,tm,0.5);
     return;
   }
-  if(t.o==="P")st.kE++; else st.kP++;
+  if(t.o==="P"){ st.kE++; st._respP=(st._respP||0)+1; } else { st.kP++; st._respE=(st._respE||0)+1; }   // 倒されたプレイヤーの駒は、手番の終わりに予想した駒で出し直す
   // 魔王が倒れた → その魔王を指定していた勇者が覚醒（近接攻撃3・HP+1）
   for(const y of st.ps) if(!y.dead&&y.t==="yusha"&&!y.heroBoost&&y.maou===t.id){ y.heroBoost=true; y.hp=Math.min(3,r2(y.hp+1)); }
   // 相手(P)の勇者の魔王はCPUには秘密。CPUの駒が倒れるたび「それが魔王だった」可能性（約1/3）を見込む
@@ -4310,7 +4319,100 @@ function ssDealDamage(st,attacker,target,kind){
   }
   if(killed) ssKill(st,target);
 }
-function ssRemoveDead(st){ st.ps=st.ps.filter(p=>!p.dead); }
+function ssRemoveDead(st){
+  st.ps=st.ps.filter(p=>!p.dead);
+  // プレイヤーの駒を倒した：相手は手前の段に新しい駒を出してくる（予想した種類・最もCPUの駒に迫れる列）
+  if(st._respP){ const n=st._respP; st._respP=0; if(st.kE<2&&SS_RESP_PRED) for(let i=0;i<n;i++) ssAddPredictedRespawn(st); }
+  // CPUの駒が倒された：CPUも手前の段に出し直す（倒しきれる相手がいれば、それを倒せる駒と列を選ぶ）
+  if(st._respE){ const n=st._respE; st._respE=0; if(st.kP<2) for(let i=0;i<n;i++) ssAddERespawn(st); }
+}
+/* CPUの出し直し（探索用）。実際の出し直し(aiRespawn)と同じく、次の手番で討ち取れる相手がいれば
+   その駒と列を選ぶ（低HPの相手を泳がせておき、出し直した騎馬などで倒しきる狙いを読めるように）。
+   討ち取れる相手がいなければ、探索開始時に決めた汎用の候補を、相手に近い列に出す */
+const SS_ERESP_TYPES=["kiba","kenshi","senshi","kyuhei","sogeki","boken","ninja","kaizoku","inoshishi","taka","souhei","kyuketsuki"];
+let SS_ERESP_DEFAULT=null;
+function ssAddERespawn(st){
+  const mainsE=st.ps.filter(q=>q.o==="E"&&q.t!=="kemono");
+  const half=c=>c<3?0:1;
+  const cols=[];
+  for(let c=0;c<6;c++){
+    if(ssAt(st,0,c))continue;
+    if((st.territories||[]).some(t=>t.r===0&&t.c===c&&t.owner==="P"))continue;
+    if((st.walls||[]).some(w=>w.r===0&&w.c===c))continue;
+    if(mainsE.length>=2&&mainsE.every(q=>half(q.c)===half(c)))continue;
+    cols.push(c);
+  }
+  if(!cols.length)return;
+  const foes=st.ps.filter(q=>q.o==="P"&&q.t!=="kemono"&&!q.invis);
+  const mk=(type,c)=>{ const info=PIECES[type]; return {id:-900-st.ps.length-(st.kP||0)*10,t:type,o:"E",r:0,c,hp:info.maxHp||3,cut:false,block:null,phoenix:false,
+    maxAp:info.ap,heroBoost:false,invis:false,noAtk:false,esperMode:"ortho",resp:true}; };
+  let best=null,bs=-1e9;
+  if(foes.some(f=>f.hp<=1.5)){
+    for(const type of SS_ERESP_TYPES){
+      if(type==="yusha")continue;
+      for(const c of cols){
+        const q=mk(type,c);
+        let kill=0;
+        const spots=[{r:0,c},...ssReach(st,q)];
+        for(const d of spots){
+          const from={...q,r:d.r,c:d.c};
+          for(const f of foes){
+            if(ssHits(from,f)&&ssKillable(f,ssAtk(from,"melee",f))){kill=1;break;}
+            if(SS.ranged.has(type)&&ssRangedCells(from,d.r,d.c).some(([r,c2])=>r===f.r&&c2===f.c)&&ssKillable(f,ssAtk(from,"ranged",f))){kill=1;break;}
+          }
+          if(kill)break;
+        }
+        const sc=kill*1000+(AI_WEIGHTS[type]||2);
+        if(sc>bs){bs=sc;best=q;}
+      }
+    }
+    if(bs<1000)best=null;
+  }
+  if(!best){
+    const type=SS_ERESP_DEFAULT||"kenshi";
+    let bc=cols[0],bd=1e9;
+    for(const c of cols){ let d=99; for(const f of foes)d=Math.min(d,Math.abs(f.r)+Math.abs(f.c-c)); const sc=d*10+Math.abs(c-2.5); if(sc<bd){bd=sc;bc=c;} }
+    best=mk(type,bc);
+  }
+  st.ps.push(best);
+}
+/* 相手(P)が出し直してくる駒の予想（探索の開始時に1回だけ決める） */
+let SS_RESP_PRED=null;
+function aiPredictPlayerRespawn(){
+  const eTypes=alive("E").filter(p=>p.type!=="kemono").map(p=>p.type);
+  const pTypes=mains("P").map(p=>aiSeenType(p));
+  let freq={},tot=0;
+  try{ if(learnActive()){ const A=learnAgg(); freq=A.pPick||{}; for(const k in freq)tot+=freq[k]; } }catch(e){}
+  let best=null,bs=-1e9;
+  for(const type of PICKABLE){
+    if(type==="yusha"&&pTypes.includes("yusha"))continue;
+    let sc=(AI_WEIGHTS[type]||2)*2;
+    for(const et of eTypes) sc+=aiSetupCounter(type,et);      // CPUの駒に強い駒を出してくる
+    if(tot>0) sc+=((freq[type]||0)/tot)*60;                    // 過去によく選んでいる駒
+    sc-=pTypes.filter(t=>t===type).length*8;
+    if(sc>bs){bs=sc;best=type;}
+  }
+  return best?{type:best}:null;
+}
+function ssAddPredictedRespawn(st){
+  const type=SS_RESP_PRED.type, info=PIECES[type]; if(!info)return;
+  const mainsP=st.ps.filter(q=>q.o==="P"&&q.t!=="kemono");
+  const half=c=>c<3?0:1;
+  const eP=st.ps.filter(q=>q.o==="E");
+  let best=null,bd=1e9;
+  for(let c=0;c<6;c++){
+    if(ssAt(st,5,c))continue;
+    if((st.territories||[]).some(t=>t.r===5&&t.c===c&&t.owner==="E"))continue;
+    if((st.walls||[]).some(w=>w.r===5&&w.c===c))continue;
+    if(mainsP.length>=2&&mainsP.every(q=>half(q.c)===half(c)))continue;
+    let d=99; for(const e of eP)d=Math.min(d,Math.abs(e.r-5)+Math.abs(e.c-c));
+    const score=d*10+Math.abs(c-2.5);   // CPUの駒に近い列ほど（同じなら中央寄り）
+    if(score<bd){bd=score;best=c;}
+  }
+  if(best===null)return;
+  st.ps.push({id:-800-(st.kE||0)-st.ps.length,t:type,o:"P",r:5,c:best,hp:info.maxHp||3,cut:false,block:null,phoenix:false,
+    maxAp:info.ap,heroBoost:false,invis:false,noAtk:false,esperMode:"ortho",resp:true});
+}
 function ssTerminal(st){ return st.kP>=2||st.kE>=2; }
 
 /* 1手番ぶんの合法手を列挙（移動+能力、その後ベスト通常攻撃を自動付与）
@@ -4895,12 +4997,26 @@ function ssReach(st,p){
   const res={[p.r+","+p.c]:{cost:0,risk:0,prisk:0}};
   let frontier=[{r:p.r,c:p.c}];
   const dirs=ssMoveDirs(p);
-  const occupied=(r,c)=>st.ps.some(q=>q.id!==p.id&&q.r===r&&q.c===c);
-  const wall=(r,c)=>st.walls&&st.walls.some(w=>w.r===r&&w.c===c); // 錬金術師の壁
-  // 領地：相手（p.o と異なる owner）の領地マスには入れない
-  const terrBlock=(r,c)=>{ const t=st.territories&&st.territories.find(x=>x.r===r&&x.c===c); return t && t.owner!==p.o; };
-  // CPUの罠：相手(P)の駒が踏むとそこで止まる（それ以上進めない）
-  const eTrapAt=(r,c)=>p.o==="P"&&st.eTraps&&st.eTraps.some(t=>t.r===r&&t.c===c);
+  // 盤面の情報は最初に36マスの表にしておき、各マスの判定を速くする（探索の高速化）
+  const occG=new Uint8Array(36), wallG=new Uint8Array(36), terrG=new Uint8Array(36), trapG=new Uint8Array(36);
+  for(const q of st.ps) if(q.id!==p.id&&q.r>=0&&q.r<6&&q.c>=0&&q.c<6) occG[q.r*6+q.c]=1;
+  if(st.walls) for(const w of st.walls) wallG[w.r*6+w.c]=1;                       // 錬金術師の壁
+  if(st.territories) for(const t of st.territories) if(t.owner!==p.o) terrG[t.r*6+t.c]=1; // 相手の領地には入れない
+  if(p.o==="P"&&st.eTraps) for(const t of st.eTraps) trapG[t.r*6+t.c]=1;          // CPUの罠：相手(P)の駒はそこで止まる
+  const occupied=(r,c)=>occG[r*6+c]===1;
+  const wall=(r,c)=>wallG[r*6+c]===1;
+  const terrBlock=(r,c)=>terrG[r*6+c]===1;
+  const eTrapAt=(r,c)=>trapG[r*6+c]===1;
+  // 色陣の偏り判定（ssColorOk と同じ判定を前計算）
+  let colorFree=true; const halfCnt=[0,0];
+  if(p.t!=="kemono"){
+    const allies=st.ps.filter(q=>q.o===p.o&&q.t!=="kemono");
+    if(allies.length>=3){
+      const h0=allies[0].c<3?0:1;
+      if(allies.some(q=>(q.c<3?0:1)!==h0)){ colorFree=false; for(const q of allies) if(q.id!==p.id) halfCnt[q.c<3?0:1]++; }
+    }
+  }
+  const colOk=(nr,nc)=>colorFree||(1+halfCnt[nc<3?0:1])<3;
   // 相手の罠（推定）：CPU(E)の駒が通るマスの危険度
   const tpm=(p.o==="E"&&st.trapProb&&st.trapProb.length)?ssTrapProbMap(st):null;
   for(let s=0;s<ap;s++){
@@ -4925,7 +5041,7 @@ function ssReach(st,p){
         if(occupied(nr,nc))continue;
         if(wall(nr,nc))continue;              // 壁のマスには入れない
         if(terrBlock(nr,nc))continue;         // 相手の領地には入れない
-        if(!ssColorOk(st,p,nr,nc))continue;
+        if(!colOk(nr,nc))continue;
         res[k]={cost:ncost,risk:nrisk,prisk:cr.risk,trapped:eTrapAt(nr,nc)};
         nf.push({r:nr,c:nc});
       }
@@ -4942,7 +5058,7 @@ function ssReach(st,p){
       if(occupied(nr,nc))continue;
       if(wall(nr,nc))continue;                // 着地マスが壁なら不可
       if(terrBlock(nr,nc))continue;           // 相手の領地には着地不可
-      if(!ssColorOk(st,p,nr,nc))continue;
+      if(!colOk(nr,nc))continue;
       const k=nr+","+nc;
       if(!res[k]||res[k].cost>2)res[k]={cost:2,risk:0,prisk:0,trapped:eTrapAt(nr,nc)};
     }
@@ -4956,12 +5072,12 @@ function ssReach(st,p){
       if(!obstacle(or,oc))continue;           // 隣が障害物の時のみ跳躍
       if(obstacle(nr,nc))continue;            // 着地先が空きでない＝不可
       if(terrBlock(nr,nc))continue;
-      if(!ssColorOk(st,p,nr,nc))continue;
+      if(!colOk(nr,nc))continue;
       const k=nr+","+nc;
       if(!res[k]||res[k].cost>1)res[k]={cost:1,risk:0,prisk:0,trapped:eTrapAt(nr,nc),jumped:true};
     }
     // 連続飛び越え：着地した隣にさらに飛び越えられる障害物があれば行動力+1 → もう一度飛ぶ／1マス動く
-    const canLand=(r,c)=>inB(r,c)&&!obstacle(r,c)&&!terrBlock(r,c)&&ssColorOk(st,p,r,c);
+    const canLand=(r,c)=>inB(r,c)&&!obstacle(r,c)&&!terrBlock(r,c)&&colOk(r,c);
     const jumpsFrom=(r0,c0)=>{ const o=[]; for(const [dr,dc] of ALL8){ if(!inB(r0+dr,c0+dc)||!obstacle(r0+dr,c0+dc))continue; const lr=r0+dr*2,lc=c0+dc*2; if(canLand(lr,lc))o.push([lr,lc]); } return o; };
     const seen=new Set();
     const chain=(r0,c0,depth)=>{
@@ -4995,7 +5111,7 @@ function ssReach(st,p){
         const [r0,c0]=k0.split(",").map(Number);
         for(const [dr,dc] of dirs){
           const nr=r0+dr,nc=c0+dc;
-          if(!inB(nr,nc)||occupied(nr,nc)||wall(nr,nc)||terrBlock(nr,nc)||!ssColorOk(st,p,nr,nc))continue;
+          if(!inB(nr,nc)||occupied(nr,nc)||wall(nr,nc)||terrBlock(nr,nc)||!colOk(nr,nc))continue;
           nx.add(nr+","+nc);
         }
       }
@@ -5758,6 +5874,75 @@ let ssNodes=0, ssDeadline=0, ssAbort=false;
 let ssNodeCap=2600000;
 const SS_NODE_CAP_NORMAL=2600000;
 const SS_NODE_CAP_STRONG=Number.MAX_SAFE_INTEGER; // つよいモードはノード上限を設けず、時間の許す限り深く読む
+/* ===== 置換表：手順が違っても同じ局面になったら、読んだ結果を使い回す =====
+   局面のキー → {d:読んだ深さ, v:値, f:0正確/1下限/2上限, b:最善だった子の並び順} */
+let SS_TT=new Map();
+const SS_TT_MAX=300000;
+function ssKey(st){
+  let k=st.side+st.kP+st.kE+"|"+(st.pPend||0)+(st.pExtra||0)+(st.pLock?1:0)+(st.ePend||0)+(st.eExtra||0)+(st.eLock?1:0)+"|"+Math.round((st.trapPen||0)*100)+"|";
+  const ps=st.ps.slice().sort((a,b)=>a.id-b.id);
+  for(const p of ps){
+    k+=p.id+p.t+p.o+p.r+p.c+":"+p.hp+(p.cut?"c":"")+(p.cutNext?"n":"")+(p.noAtk?"a":"")+(p.henge?"h":"")+(p.healUsed?"u":"")+(p.prayUsed?"y":"")
+      +(p.futoUsed?"f":"")+(p.heroBoost?"B":"")+(p.heroP?("P"+p.heroP.toFixed(2)):"")+(p.invis?"i":"")+(p.phoenix?"x":"")+(p.block?("b"+p.block.r+p.block.c):"")
+      +"m"+p.maxAp+(p.esperMode==="diag"?"d":"")+(p.beastOf!=null?("o"+p.beastOf):"")+(p.maou!=null?("w"+p.maou):"")+";";
+  }
+  if(st.bombs&&st.bombs.length) k+="B"+st.bombs.map(b=>b.owner+b.r+b.c+b.fuse).sort().join("");
+  if(st.eTraps&&st.eTraps.length) k+="T"+st.eTraps.map(t=>""+t.r+t.c).sort().join("");
+  if(st.territories&&st.territories.length) k+="R"+st.territories.map(t=>t.owner+t.r+t.c).sort().join("");
+  if(st.meteors&&st.meteors.length) k+="M"+st.meteors.map(m=>m.id+"."+m.fuse+"."+m.cells.length).join(",");
+  if(st.trapProb) k+="p"+st.trapProb.length;
+  return k;
+}
+/* 決着がつく手の追加読み（静止探索）：読みの最後の局面で、手番側が相手の駒を討ち取れるなら、
+   その手（討ち取る手）だけをもう少し読む。「4手先で前に出たら5手目で取られていた」という見落としを防ぐ */
+const SS_QDEPTH=2;
+function ssCanKillSoon(st){
+  // 手番側の駒が、今いる場所から1手番で討ち取れる相手がいるか（大まかな判定）
+  const side=st.side;
+  if(side==="P"){
+    const d=ssPlayerThreat(st);
+    for(const e of st.ps){ if(e.o!=="E"||e.t==="kemono"||e.invis)continue; const dm=d[e.r+","+e.c]||0; if(dm>0&&ssKillable(e,dm))return true; }
+    return false;
+  }
+  const foes=st.ps.filter(f=>f.o==="P"&&f.t!=="kemono"&&!f.invis&&!f.guess);
+  if(!foes.length)return false;
+  const minHp=Math.min(...foes.map(f=>f.hp));
+  if(minHp>3)return false;
+  for(const q of st.ps){
+    if(q.o!=="E"||q.t==="kemono")continue;
+    const spots=ssReach(st,q); spots.push({r:q.r,c:q.c,apLeft:(q.maxAp||1)-(q.cut?1:0)});
+    for(const d of spots){
+      const from={...q,r:d.r,c:d.c,charged:!!d.charge};
+      for(const f of foes){
+        if(!SS.noNormal.has(q.t)&&!q.noAtk&&ssHits(from,f)&&ssKillable(f,ssAtk(from,"melee",f)))return true;
+        if(SS.ranged.has(q.t)&&d.apLeft>=1&&ssRangedCells(from,d.r,d.c).some(([r,c])=>r===f.r&&c===f.c)&&ssKillable(f,ssAtk(from,"ranged",f)*(d.apLeft>=2?2:1)))return true;
+      }
+    }
+  }
+  return false;
+}
+function ssQuiesce(st,qd,alpha,beta){
+  const stand=st._ev!==undefined?st._ev:ssEval(st);
+  if(qd<=0||ssAbort||ssTerminal(st))return stand;
+  if(!ssCanKillSoon(st))return stand;
+  // 手番側は「討ち取らない（今の評価のまま）」も選べる＝stand pat
+  if(st.side==="E"){ if(stand>=beta)return stand; if(stand>alpha)alpha=stand; }
+  else { if(stand<=alpha)return stand; if(stand<beta)beta=stand; }
+  if((++ssNodes&255)===0){ if(ssNodes>ssNodeCap||performance.now()>ssDeadline){ssAbort=true;return stand;} }
+  const kills0=st.side==="E"?st.kE:st.kP;
+  const caps=ssGenerate(st).filter(ch=>(st.side==="E"?ch.kE:ch.kP)>kills0);
+  if(!caps.length)return stand;
+  let best=stand;
+  for(const ch of caps){
+    let v;
+    if(ssTerminal(ch)){ const e=ssEval(ch); v=e>0?e+qd*1000:e-qd*1000; }
+    else v=ssQuiesce(ch,qd-1,alpha,beta);
+    if(st.side==="E"){ if(v>best)best=v; if(best>alpha)alpha=best; }
+    else { if(v<best)best=v; if(best<beta)beta=best; }
+    if(alpha>=beta||ssAbort)break;
+  }
+  return best;
+}
 function ssSearch(st,depth,alpha,beta){
   if(ssAbort)return ssEval(st);
   if(ssTerminal(st)){
@@ -5766,39 +5951,61 @@ function ssSearch(st,depth,alpha,beta){
     return v>0 ? v+depth*1000 : v-depth*1000;
   }
   if(depth<=0){
-    return ssEval(st);
+    return ssQuiesce(st,SS_QDEPTH,alpha,beta);
   }
   if((++ssNodes&255)===0){
     if(ssNodes>ssNodeCap||performance.now()>ssDeadline){ssAbort=true;return ssEval(st);}
   }
-  let children=ssGenerate(st);
-  // ムーブオーダリング＆幅制限（深いほど狭く）
-  const width=depth>=6?10:depth>=3?12:16;
-  if(children.length>width){
-    children.sort((a,b)=> (st.side==="E"? ssEval(b)-ssEval(a) : ssEval(a)-ssEval(b)) );
-    children=children.slice(0,width);
+  // 置換表：同じ局面を同じ深さ以上で読んでいれば、その結果を使う
+  const key=ssKey(st);
+  const e=SS_TT.get(key);
+  const a0=alpha,b0=beta;
+  if(e&&e.d>=depth){
+    if(e.f===0)return e.v;
+    if(e.f===1&&e.v>alpha)alpha=e.v;
+    else if(e.f===2&&e.v<beta)beta=e.v;
+    if(alpha>=beta)return e.v;
   }
+  let children=ssGenerate(st);
+  let movedB=0;
+  // ムーブオーダリング＆幅制限（深いほど狭く）。評価値は子ごとに1回だけ計算して使い回す
+  const width=depth>=6?10:depth>=3?12:16;
+  if(children.length>1){
+    for(const ch of children) if(ch._ev===undefined) ch._ev=ssEval(ch);
+    children.sort((a,b)=> (st.side==="E"? b._ev-a._ev : a._ev-b._ev) );
+    // 前回この局面で最善だった手を最初に読む（枝刈りが効きやすくなる）
+    if(e&&e.b>0&&e.b<children.length){ const bc=children.splice(e.b,1)[0]; children.unshift(bc); movedB=e.b; }
+    if(children.length>width) children=children.slice(0,width);
+  }
+  let best, bestIdx=0;
   if(st.side==="E"){
-    let best=-Infinity;
-    for(const ch of children){
-      const v=ssSearch(ch,depth-1,alpha,beta);
-      if(v>best)best=v;
+    best=-Infinity;
+    for(let i=0;i<children.length;i++){
+      const v=ssSearch(children[i],depth-1,alpha,beta);
+      if(v>best){best=v;bestIdx=i;}
       if(best>alpha)alpha=best;
       if(alpha>=beta)break;
       if(ssAbort)break;
     }
-    return best;
   }else{
-    let best=Infinity;
-    for(const ch of children){
-      const v=ssSearch(ch,depth-1,alpha,beta);
-      if(v<best)best=v;
+    best=Infinity;
+    for(let i=0;i<children.length;i++){
+      const v=ssSearch(children[i],depth-1,alpha,beta);
+      if(v<best){best=v;bestIdx=i;}
       if(best<beta)beta=best;
       if(alpha>=beta)break;
       if(ssAbort)break;
     }
-    return best;
   }
+  if(!ssAbort && children.length){
+    // 並び順の番号は「評価順に並べた後」のもの。最善手を先頭へ移していた場合は元の番号に戻す
+    let origIdx=bestIdx;
+    if(movedB>0){ if(bestIdx===0)origIdx=movedB; else if(bestIdx<=movedB)origIdx=bestIdx-1; }
+    const f = best<=a0 ? 2 : (best>=b0 ? 1 : 0);
+    if(SS_TT.size>SS_TT_MAX)SS_TT.clear();
+    SS_TT.set(key,{d:depth,v:best,f,b:origIdx});
+  }
+  return best;
 }
 /* 最善のE手番を選ぶ。反復深化で目標プライまで、時間予算内で深掘り */
 /* === 千日手（同一行動の反復）回避 === */
@@ -5910,6 +6117,9 @@ function ssBestPrepare(){
     }
   }
   if(rootMoves.length===0)return null;
+  SS_RESP_PRED=aiPredictPlayerRespawn();   // 倒した後に相手が出してくる駒の予想
+  SS_TT=new Map();                          // 置換表は手番ごとに作り直す
+  try{ SS_ERESP_DEFAULT=aiPickRespawnType(); }catch(e){ SS_ERESP_DEFAULT="kenshi"; }   // 自分の駒が倒された時に出す駒（汎用の候補）
   const lessons=learnLessonsFor(root); // 学習：この盤面（または近い盤面）で過去に敗着となった手
   // 千日手：この手番が最終手番なら、手番終了後の盤面が6手番前と同じになる手は負け
   const sennChk = (sennLastChance("E")&&G.sennHist&&G.sennHist.length>=2) ? G.sennHist : null;
@@ -5981,7 +6191,10 @@ function ssBestPrepare(){
       if(tg&&tg.t==="chokyo"&&ns.ps.some(b=>b.t==="kemono"&&b.o===tg.o&&b.beastOf===tg.id)&&!ssTamerCatchable(ns,tg)) repPenalty+=260;
     }
     // 今すぐ討ち取れる手は、同じ評価の「後で討ち取る」手より優先（先送りすると逃げられる恐れ）
-    repPenalty -= (ns.kE-root.kE)*80;
+    // 今倒せる時は倒す方を少し優先（先送りすると逃げられる恐れ）。
+    // ただし「あえて倒さず低HPのまま泳がせ、自分の駒が倒された後の出し直し（騎馬など）で2体まとめて倒しきる」
+    // といった狙いは、読みの中で両者の出し直しを考えた上で選べるよう、優先は控えめにしている。
+    repPenalty -= (ns.kE-root.kE)*150;
     // 敗着の記憶：同一盤面なら候補から事実上除外、近い盤面でも強く避ける
     if(lessons.length) repPenalty += learnLessonPenalty(lessons, mv.pieceId, mv.dr, mv.dc, mv.ability?mv.ability.kind:"-", 50000, 1800,
       learnAbKey(learnAbDetail(mv.ability,id=>{const q=root.ps.find(x=>x.id===id);return q?[q.r,q.c]:null;}),false));
@@ -6003,7 +6216,10 @@ function ssRunDepth(applied, depth, order, valById){
   let completedAny=false;
   for(const idx of order){
     const node=applied[idx];
-    const raw=ssSearch(node.state, depth-1, -Infinity, Infinity);
+    if(node.sennLose){ scored.push({idx,v:-2e7}); valById[idx]=-2e7; completedAny=true; continue; }
+    // 根の手どうしでも枝刈り：今の最善より良くなりうるかだけを読む（同点の判定のため僅かに下げる）
+    const lo = localBest===-Infinity ? -Infinity : localBest+(node.repPenalty||0)-1e-6;
+    const raw=ssSearch(node.state, depth-1, lo, Infinity);
     if(ssAbort)break;
     completedAny=true;
     // 千日手ペナルティを反映した実効スコアで手を選ぶ（ただし勝ち確定は割り引かない）
@@ -6442,9 +6658,10 @@ function aiUseSkillNow(q,sk,plan){
     else if(k==="poison"&&t.owner==="P"&&!t.flags.invisible){ dealDamage(t,1,q,"poison"); log(`敵の薬師が${pieceLabel(t)}に毒を盛った`,"e"); sfx("hit"); }
   }else if(k==="summon"){
     if(alive("E").some(b=>b.type==="kemono"&&b.flags.beastOf===q.id))return;
-    if(!inB(sk.sr,sk.sc)||at(sk.sr,sk.sc)||Math.abs(sk.sr-q.r)+Math.abs(sk.sc-q.c)!==1)return;
+    if(!inB(sk.sr,sk.sc)||visAt(sk.sr,sk.sc,"E")||wallAt(sk.sr,sk.sc)||Math.abs(sk.sr-q.r)+Math.abs(sk.sc-q.c)!==1)return;
     q.ap--; const b=makePiece("kemono","E",sk.sr,sk.sc); b.flags.beastOf=q.id; b.spawn=true; G.pieces.push(b);
     log("敵の調教師が獣を召喚した","e"); sfx("place");
+    if(beastHitsHiddenNinja(b))return;
     if(plan&&plan.attack&&plan.attack.attackerId===SS_NEW_BEAST_ID)plan.attack.attackerId=b.id;
   }else if(k==="pray"){
     if(q.flags.prayUsed)return; q.ap--; q.flags.prayUsed=true;
@@ -6654,11 +6871,11 @@ function aiExecutePlan(plan){
             if(hasBeast)return;
             let {sr,sc}=plan.ability;
             // 予定マスが埋まっていたら、敵に最も近い空き隣接マスへ
-            if(!inB(sr,sc)||at(sr,sc)){
+            if(!inB(sr,sc)||visAt(sr,sc,"E")||wallAt(sr,sc)){
               let best=null,bd=99;
               for(const [ddr,ddc] of ORTHO){
                 const r=p.r+ddr,c=p.c+ddc;
-                if(!inB(r,c)||at(r,c))continue;
+                if(!inB(r,c)||visAt(r,c,"E")||wallAt(r,c))continue;
                 let md=99;for(const f of alive("P"))if(!f.flags.invisible)md=Math.min(md,Math.abs(f.r-r)+Math.abs(f.c-c));
                 if(md<bd){bd=md;best=[r,c];}
               }
@@ -6669,6 +6886,7 @@ function aiExecutePlan(plan){
             b.flags.beastOf=p.id; b.spawn=true;
             G.pieces.push(b);
             log("敵の調教師が獣を召喚した","e");sfx("place");
+            if(beastHitsHiddenNinja(b))return;
             // 探索が「召喚した獣で攻撃」と読んでいれば、その攻撃を獣に割り当てる
             if(plan.attack&&plan.attack.attackerId===SS_NEW_BEAST_ID)plan.attack.attackerId=b.id;
           });
